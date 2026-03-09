@@ -5,7 +5,7 @@ This is an experiment to have the LLM autonomously optimize a Physics-Informed N
 ## Setup
 
 1. **Agree on a run tag**: propose a tag based on today's date (e.g. `pinn-mar5`). 
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
+2. **Create the branch**: `git checkout -b autoresearch-kaggle/<tag>` from current master.
 3. **Read the files**:
    - `launch.py` — Wraps `train.py` and submits it to Kaggle via API. Do not modify.
    - `prepare.py` — Isolated ground truth execution logic for Kaggle. Do not modify.
