@@ -1,89 +1,87 @@
-# autoresearch
+# autoresearch-pinn
 
 ![teaser](progress.png)
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+*One day, frontier physics and PDE research used to be done by meat computers manually tuning learning rates, sampling strategies, and loss weights in between eating and sleeping. That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents pushing compute jobs to cloud clusters. The agents claim that we are now in the 10,205th generation of the PINN architecture, in any case no one could tell if that's right or wrong as the loss landscapes of these Physics-Informed Neural Networks have grown beyond human comprehension. This repo is the story of how it all began. - Adapted from @karpathy, autoresearch*
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+The idea: give an AI agent a baseline Physics-Informed Neural Network (PINN) designed to solve the **Lugiato-Lefever Equation (LLE)**. Give it access to a Free Kaggle T4 GPU via an API wrapper, and let it experiment autonomously overnight. 
+
+The agent modifies the code, pushes it to Kaggle, trains for about 13 minutes using **only physics constraints** (initial conditions + boundary conditions + PDE residual), checks if the True Mean Squared Error (`val_mse`) against an isolated ground-truth dataset improved, keeps or discards the changes, and repeats. You wake up in the morning to a log of experiments and (hopefully) a PINN that perfectly models complex non-linear optical dynamics.
+
+The core idea is that you're not touching any of the Python files yourself. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents.
 
 ## How it works
 
-The repo is deliberately kept small and only really has a three files that matter:
+Unlike standard ML tasks, PINNs learn the *physics* of the problem, not just data mapping. To strictly enforce this, and to utilize free cloud GPUs, the repo is structured around these core files:
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+- **`launch.py`** — The Kaggle API wrapper. It bundles the training code, submits it as an isolated script to Kaggle, waits for the GPU to finish, and fetches the logs. Run by the agent locally.
+- **`prepare.py`** — Executes *inside* Kaggle. Handles loading the LLE dataset, provides initial/boundary conditions to the model, and performs the final isolated ground-truth `evaluate_mse` check. **Not modified.**
+- **`train.py`** — The single file the agent edits. Contains the MLP architecture, the LLE physical residuals, data collocation sampling, and the optimizer (Adam + L-BFGS). **This file is edited and iterated on by the agent**.
+- **`program.md`** — Baseline instructions for the agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+By design, training runs for a **fixed time budget of ~13 minutes** on a Kaggle T4 GPU (total turnaround time ~15-20 mins). The metric is **val_mse** — lower is better. 
+
+## The Physics Problem
+
+The model attempts to solve the 1D Lugiato-Lefever Equation (LLE), describing microresonator frequency combs:
+$$ \frac{\partial \psi}{\partial T} = - (1 + i \zeta_0) \psi + \frac{i}{2} \frac{\partial^2 \psi}{\partial \Theta^2} + i |\psi|^2 \psi + f $$
+
+The PINN only knows the state at $t=0$ and the system parameters. It must deduce the complex spatiotemporal evolution strictly by minimizing the equation's residual over a sampled grid.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/), and a Kaggle account with API credentials.
 
-```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+1. **Set up Kaggle API credentials:**
+Create a `.env` file in the root directory:
+```env
+KAGGLE_USERNAME=your_kaggle_username
+KAGGLE_KEY=your_kaggle_api_key
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+2. **Install dependencies:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+```
+
+3. **Manually run a single training experiment (~15-20 min total):**
+```bash
+uv run launch.py
+```
+
+If the Kaggle submission succeeds and logs are successfully downloaded showing a `val_mse`, your setup is working and you can go into autonomous research mode.
 
 ## Running the agent
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+Simply spin up your favorite AI coding assistant (Claude 3.5 Sonnet / GPT-4o / Cursor / Aider) in this repo, ensure it doesn't have permissions to go rogue outside the folder, and prompt:
 
 ```
 Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+The `program.md` file acts as a system prompt and lightweight "skill" for the agent.
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+.env            — Kaggle credentials (you create this)
+launch.py       — Submits the job to Kaggle
+prepare.py      — Kaggle-side isolated evaluation (do not modify)
+train.py        — PINN model, physics logic, optimization loop (agent modifies this)
+program.md      — Agent instructions
+pyproject.toml  — Dependencies
 ```
 
 ## Design choices
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+- **Remote Cloud Execution.** Doing AI research normally requires expensive local GPUs. By writing a wrapper (`launch.py`), the autonomous swarm can operate from a cheap laptop while dispatching heavy PDE calculations to free Kaggle T4 GPUs.
+- **Strict Data Isolation.** The dataset is only used at $t=0$ for initial conditions. The agent cannot "cheat" by training on the full grid because `prepare.py` hides the ground truth and only uses it to calculate the final `val_mse` score. 
+- **Single file to modify.** The agent only touches `train.py`. This keeps the context window small and diffs easily reviewable.
+- **Fixed time budget.** The model must learn as much physics as possible within ~13 minutes. This forces the agent to discover efficient sampling methods (like residual-based adaptive refinement), better optimizers (L-BFGS vs Adam transitions), and optimal architectural tweaks rather than just "training longer."
 
-## Platform support
+## Credits & License
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+This project is an adaptation of [Andrej Karpathy's autoresearch](https://github.com/karpathy/autoresearch), tailored for scientific machine learning (SciML), Physics-Informed Neural Networks, and Cloud execution limits. 
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
-
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
-
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
-
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-
-## License
-
-MIT
+MIT License.
