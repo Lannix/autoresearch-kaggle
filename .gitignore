@@ -23,3 +23,4 @@ dev/
 results.tsv
 
 .env
+.vscode/
