@@ -26,11 +26,11 @@ def main():
     submit_dir = "kaggle_submit"
     os.makedirs(submit_dir, exist_ok=True)
     
-    # Copy scripts to submission folder
+    # Copy scripts to submission folder (they will sit next to each other on Kaggle)
     shutil.copy("train.py", os.path.join(submit_dir, "train.py"))
     shutil.copy("prepare.py", os.path.join(submit_dir, "prepare.py"))
     
-    # Metadata for Kaggle Kernel
+    # Metadata for Kaggle Kernel explicitly requesting GPU T4
     metadata = {
         "id": run_id,
         "title": "autoresearch-pinn-lle",
@@ -39,7 +39,8 @@ def main():
         "kernel_type": "script",
         "is_private": "true",
         "enable_gpu": "true",
-        "enable_internet": "false",
+        "accelerator": "GPU", # Explicit Kaggle T4 mapping
+        "enable_internet": "true",
         "dataset_sources": ["technolight/matlab-conditions"],
         "competition_sources":[],
         "kernel_sources": [],
@@ -59,7 +60,7 @@ def main():
         output = res.stdout.strip()
         
         if "complete" in output or "error" in output or "cancel" in output:
-            print(f"Final status: {output}")
+            print(f"\nFinal status: {output}")
             break
         elif "running" in output or "queued" in output:
             print(f"Status: {output}")
@@ -72,7 +73,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     subprocess.run(["kaggle", "kernels", "output", run_id, "-p", out_dir], check=False)
     
-    log_files =[f for f in os.listdir(out_dir) if f.endswith(".log")]
+    log_files = [f for f in os.listdir(out_dir) if f.endswith(".log")]
     if log_files:
         log_path = os.path.join(out_dir, log_files[0])
         with open(log_path, "r") as f:
@@ -81,7 +82,7 @@ def main():
             print("="*40)
             print(f.read())
     else:
-        print("No train.log found in output. The kernel might have crashed on startup.")
+        print("\nNo .log found in output. The kernel might have crashed early or syntax error.")
 
 if __name__ == "__main__":
     main()

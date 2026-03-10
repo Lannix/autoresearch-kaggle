@@ -3,8 +3,13 @@ name = "autoresearch-pinn"
 version = "0.1.0"
 description = "Autonomous PINN research swarm for LLE"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies =[
-    "kaggle>=1.6.0",
-    "python-dotenv>=1.0.1"
+    "kaggle>=1.8.0",
+    "python-dotenv>=1.0.1",
+    "numpy",
+    "scipy",
+    "torch",
+    "matplotlib",
+    "pandas"
 ]

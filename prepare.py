@@ -7,6 +7,9 @@ import torch
 import numpy as np
 from scipy.io import loadmat
 
+# Жесткий лимит времени для Kaggle T4: 13 минут (780 секунд)
+TIME_BUDGET = 780 
+
 # We are executing on Kaggle, the dataset is mounted here automatically
 DATA_PATH_1 = "/kaggle/input/matlab-conditions/Breather.mat"
 DATA_PATH_2 = "/kaggle/input/technolight/matlab-conditions/Breather.mat"
@@ -60,7 +63,7 @@ def get_training_setup():
 
 @torch.no_grad()
 def evaluate_mse(model_uv_fn, device, dtype=torch.float32):
-    """Evaluates true MSE against isolated ground truth."""
+    """Evaluates true MSE against isolated ground truth without OOM issues."""
     gt = _load_ground_truth()
     t = gt["t"].astype(np.float32).reshape(-1, 1)
     theta = gt["theta"].astype(np.float32).reshape(-1, 1)
@@ -70,8 +73,20 @@ def evaluate_mse(model_uv_fn, device, dtype=torch.float32):
     t_val = torch.tensor(TT.reshape(-1, 1), device=device, dtype=dtype)
     th_val = torch.tensor(TH.reshape(-1, 1), device=device, dtype=dtype)
     
-    u_pred, v_pred, _ = model_uv_fn(t_val, th_val, need_x=False)
+    dataset_size = t_val.shape[0]
+    batch_size = 20000  # Батчинг чтобы T4 не упал по памяти
+    u_preds, v_preds = [],[]
     
-    psi_pred = u_pred.cpu().numpy().reshape(psi_ref.shape) + 1j * v_pred.cpu().numpy().reshape(psi_ref.shape)
+    for i in range(0, dataset_size, batch_size):
+        t_b = t_val[i:i+batch_size]
+        th_b = th_val[i:i+batch_size]
+        u_b, v_b, _ = model_uv_fn(t_b, th_b, need_x=False)
+        u_preds.append(u_b.cpu().numpy())
+        v_preds.append(v_b.cpu().numpy())
+        
+    u_pred = np.concatenate(u_preds, axis=0).reshape(psi_ref.shape)
+    v_pred = np.concatenate(v_preds, axis=0).reshape(psi_ref.shape)
+    
+    psi_pred = u_pred + 1j * v_pred
     error_field_sq = np.abs(psi_pred - psi_ref)**2
     return float(np.mean(error_field_sq))
