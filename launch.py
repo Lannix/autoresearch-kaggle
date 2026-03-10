@@ -1,32 +1,30 @@
 """
 Launcher script. Pushes train.py and prepare.py to Kaggle to be executed on a T4 GPU.
-Polls for completion and downloads the execution log.
+Polls for completion, handles errors, and downloads the execution log.
 """
 import os
 import json
 import time
 import shutil
+import traceback
 from dotenv import load_dotenv
 
-# Загружаем переменные из .env
 load_dotenv()
 
 def main():
-    # Проверяем, что заданы нужные переменные (включая новую KAGGLE_API_TOKEN)
     username = os.environ.get("KAGGLE_USERNAME")
-    api_token = os.environ.get("KAGGLE_API_TOKEN")
+    api_token = os.environ.get("KAGGLE_API_TOKEN") or os.environ.get("KAGGLE_KEY")
     
     if not username or not api_token:
-        print("[ERROR] В файле .env должны быть заданы KAGGLE_USERNAME и KAGGLE_API_TOKEN (формата KGAT_...)")
+        print("[ERROR] KAGGLE_USERNAME and KAGGLE_API_TOKEN (or KAGGLE_KEY) must be set in .env")
         return
 
-    # Импортируем KaggleApi (версии >= 1.8.0 автоматически подхватят KAGGLE_API_TOKEN из os.environ)
-    from kaggle.api.kaggle_api_extended import KaggleApi
-    
+    # Initialize Kaggle API
     try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
         api = KaggleApi()
         api.authenticate()
-        print(f"[OK] Authenticated via KAGGLE_API_TOKEN as {username}")
+        print(f"[INFO] Authenticated via Kaggle API as {username}")
     except Exception as e:
         print(f"[ERROR] Kaggle authentication failed: {e}")
         return
@@ -35,11 +33,11 @@ def main():
     submit_dir = "kaggle_submit"
     os.makedirs(submit_dir, exist_ok=True)
     
-    # Копируем скрипты
+    # Copy necessary files
     shutil.copy("train.py", os.path.join(submit_dir, "train.py"))
     shutil.copy("prepare.py", os.path.join(submit_dir, "prepare.py"))
     
-    # Метаданные (с булевыми значениями True/False)
+    # Metadata: EXPLICITLY requesting NVIDIA_TESLA_T4
     metadata = {
         "id": run_id,
         "title": "autoresearch-pinn-lle",
@@ -48,68 +46,72 @@ def main():
         "kernel_type": "script",
         "is_private": True,
         "enable_gpu": True,
-        "accelerator": "GPU", # Запрос T4 GPU
+        "accelerator": "NVIDIA_TESLA_T4",  # Force T4 instead of P100
         "enable_internet": True,
-        "dataset_sources":["technolight/matlab-conditions"],
+        "dataset_sources": ["technolight/matlab-conditions"],
         "competition_sources": [],
-        "kernel_sources":[],
+        "kernel_sources": [],
         "model_sources":[]
     }
     
     with open(os.path.join(submit_dir, "kernel-metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)
         
-    print(f"[*] Pushing job to Kaggle ({run_id})...")
+    print(f"[INFO] Pushing job to Kaggle ({run_id})...")
     try:
         api.kernels_push(folder=submit_dir)
-        print("[OK] Kernel pushed successfully!")
+        print("[INFO] Kernel pushed successfully. Job is in queue.")
     except Exception as e:
-        print(f"[ERROR] Kernel push failed: {e}")
+        print(f"[ERROR] Kernel push failed. Exception:\n{traceback.format_exc()}")
         return
         
-    print("[*] Waiting for Kaggle GPU execution to finish (this takes up to 15 mins)...")
+    print("[INFO] Waiting for Kaggle T4 execution to finish (can take 15-20 mins)...")
     last_status = None
     
+    # Polling loop
     while True:
         time.sleep(30)
         try:
-            # Получаем статус напрямую через объект API
             res = api.kernels_get_status(run_id)
-            status = str(res).lower()
+            status = str(res).strip().lower()
             
             if status != last_status:
-                print(f"Status: {status}")
+                print(f"[INFO] Current Kaggle Status: {status}")
                 last_status = status
             
             if "complete" in status:
-                print(f"\n[OK] Final status: {status}")
+                print(f"[INFO] Final status reached: {status}")
                 break
-            elif "error" in status or "cancel" in status or "fail" in status:
-                print(f"\n[ERROR] Final status: {status}")
+            elif any(err in status for err in["error", "cancel", "fail", "timeout"]):
+                print(f"[ERROR] Execution stopped with status: {status}")
                 break
         except Exception as e:
-            print(f"[WARN] Status check error (ignoring): {e}")
+            print(f"[WARN] Status check error (network glitch? Retrying...): {e}")
             
-    # Скачивание логов
+    # Download Logs
     out_dir = "kaggle_output"
     os.makedirs(out_dir, exist_ok=True)
-    print(f"[*] Downloading output to {out_dir}...")
+    print(f"[INFO] Downloading output logs to {out_dir}...")
     try:
         api.kernels_output(run_id, out_dir)
     except Exception as e:
         print(f"[WARN] Error downloading output: {e}")
     
-    # Чтение лога
+    # Parse and Print Log
     log_files =[f for f in os.listdir(out_dir) if f.endswith(".log")]
     if log_files:
         log_path = os.path.join(out_dir, log_files[0])
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            print("\n" + "="*40)
-            print("KAGGLE RUN OUTPUT")
-            print("="*40)
-            print(f.read())
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                print("\n" + "="*50)
+                print("KAGGLE RUN OUTPUT")
+                print("="*50)
+                print(f.read())
+                print("="*50)
+        except Exception as e:
+            print(f"[ERROR] Failed to read downloaded log: {e}")
     else:
-        print("\n[ERROR] No .log found in output. The kernel might have crashed early or had a syntax error.")
+        print("\n[ERROR] No .log found in output. The kernel crashed early, OOMed, or had a syntax error.")
 
 if __name__ == "__main__":
     main()

@@ -1,9 +1,10 @@
 """
 Autoresearch PINN training script for LLE. Single-GPU, single-file.
-Usage: uv run train.py
 """
 
 import time
+import traceback
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,6 +20,10 @@ torch.cuda.manual_seed_all(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
+
+print(f"[INFO] Using device: {device}")
+if torch.cuda.is_available():
+    print(f"[INFO] GPU Name: {torch.cuda.get_device_name(0)}")
 
 def t32(x):
     return torch.tensor(x, device=device, dtype=DTYPE) if not isinstance(x, torch.Tensor) else x.to(device=device, dtype=DTYPE)
@@ -64,7 +69,7 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-model = MLP(width=128, depth=5).to(device=device, dtype=DTYPE)
+model = MLP(width=130, depth=5).to(device=device, dtype=DTYPE)
 
 # ==========================================
 # 3. Physics & Gradients
@@ -146,47 +151,53 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 print(f"Starting training with time budget: {TIME_BUDGET} seconds...")
 
 step = 0
-while time.time() - t_start_training < TIME_BUDGET * 0.7:  # Leave 30% time for L-BFGS
-    optimizer.zero_grad(set_to_none=True)
-    loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
-    loss.backward()
-    optimizer.step()
-    
-    if step % 200 == 0:
-        elapsed = time.time() - t_start_training
-        print(f"Adam step={step:5d} loss={loss.item():.3e} | elapsed={elapsed:.1f}s")
-    step += 1
+try:
+    while time.time() - t_start_training < TIME_BUDGET * 0.7:  # Leave 30% time for L-BFGS
+        optimizer.zero_grad(set_to_none=True)
+        loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
+        loss.backward()
+        optimizer.step()
+        
+        if step % 200 == 0:
+            elapsed = time.time() - t_start_training
+            print(f"Adam step={step:5d} loss={loss.item():.3e} | elapsed={elapsed:.1f}s")
+        step += 1
 
-print("\nSwitching to L-BFGS refinement...")
-lbfgs = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn="strong_wolfe")
+    print("\nSwitching to L-BFGS refinement...")
+    lbfgs = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn="strong_wolfe")
 
-def closure():
-    lbfgs.zero_grad(set_to_none=True)
-    loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
-    loss.backward()
-    return loss
+    def closure():
+        lbfgs.zero_grad(set_to_none=True)
+        loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
+        loss.backward()
+        return loss
 
-while time.time() - t_start_training < TIME_BUDGET - 10:  # 10s buffer for eval
-    prev_loss = closure().item()
-    lbfgs.step(closure)
-    new_loss = closure().item()
-    print(f"L-BFGS loss: {new_loss:.3e}")
-    if abs(prev_loss - new_loss) < 1e-7:
-        break
+    while time.time() - t_start_training < TIME_BUDGET - 10:  # 10s buffer for eval
+        prev_loss = closure().item()
+        lbfgs.step(closure)
+        new_loss = closure().item()
+        print(f"L-BFGS loss: {new_loss:.3e}")
+        if abs(prev_loss - new_loss) < 1e-7:
+            break
 
-total_training_time = time.time() - t_start_training
+    total_training_time = time.time() - t_start_training
 
-# ==========================================
-# 7. Final Evaluation
-# ==========================================
-print("\nEvaluating final MSE against Ground Truth...")
-val_mse = evaluate_mse(model_uv, device, dtype=DTYPE)
-peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
-num_params = sum(p.numel() for p in model.parameters())
+    # ==========================================
+    # 7. Final Evaluation
+    # ==========================================
+    print("\nEvaluating final MSE against Ground Truth...")
+    val_mse = evaluate_mse(model_uv, device, dtype=DTYPE)
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
+    num_params = sum(p.numel() for p in model.parameters())
 
-print("---")
-print(f"val_mse:          {val_mse:.6e}")
-print(f"training_seconds: {total_training_time:.1f}")
-print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-print(f"num_steps:        {step}")
-print(f"num_params:       {num_params}")
+    print("---")
+    print(f"val_mse:          {val_mse:.6e}")
+    print(f"training_seconds: {total_training_time:.1f}")
+    print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+    print(f"num_steps:        {step}")
+    print(f"num_params:       {num_params}")
+
+except Exception as e:
+    print("\n[CRITICAL ERROR] Training crashed!")
+    traceback.print_exc()
+    sys.exit(1)

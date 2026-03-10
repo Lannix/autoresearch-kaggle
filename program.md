@@ -1,51 +1,49 @@
-# autoresearch-pinn
+# autoresearch-pinn (Windows 10 Edition)
 
-This is an experiment to have the AI autonomously optimize a Physics-Informed Neural Network (PINN) for solving the Lugiato-Lefever Equation (LLE) strictly on a Kaggle T4 GPU by Kaggle CLI (2.0.0).
+This is an experiment to have the AI autonomously optimize a Physics-Informed Neural Network (PINN) for solving the Lugiato-Lefever Equation (LLE) strictly on a Kaggle T4 GPU.
 
-## Setup
+**ENVIRONMENT:** You are operating on a Windows 10 system using CMD/PowerShell. Use Windows-compatible terminal commands or your built-in file editing/reading tools.
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `pinn-mar5`). 
-2. **Create the branch**: `git checkout -b autoresearch-kaggle/<tag>` from current master.
-3. **Read the files**:
-   - `launch.py` — Wraps `train.py` and submits it to Kaggle via API. Do not modify.
-   - `prepare.py` — Isolated ground truth execution logic for Kaggle. Do not modify.
-   - `train.py` — The file you modify. Contains the MLP, physics equations, sampling, and optimizer.
-4. **Initialize results.tsv**: Create `results.tsv` with just the header row.
+## Setup Phase (Run Once)
 
-## Experimentation
+1. **Verify Environment**: Run `uv --version` and `python --version` (must be 3.11).
+2. **Agree on a run tag**: Propose a tag based on today's date (e.g., `pinn-mar10`). 
+3. **Create the branch**: `git checkout -b autoresearch-kaggle/<tag>` from the current master.
+4. **Initialize results.tsv**: If it doesn't exist, create `results.tsv` with exactly this header row (tab-separated):
+   `commit	val_mse	memory_gb	status	description`
 
-Each experiment is sent to Kaggle using `uv run launch.py`. The Kaggle kernel has an internal time budget of ~13 minutes (T4 GPU). Total turnaround time per run (including queue) is ~15-20 minutes.
+## Experimentation Rules
+
+You will modify **`train.py`** to improve the model. Each experiment is sent to Kaggle using `launch.py`. 
+The Kaggle kernel runs with an explicit `NVIDIA_TESLA_T4` GPU and has an internal time budget of ~13 minutes. Total turnaround per run is ~15-20 mins.
 
 **What you CAN do (in `train.py`):**
-- Modify neural network architecture (depth, width, activations like Sine, Swish, Fourier Features).
-- Modify collocation point sampling strategies (e.g., adaptive, residual-based sampling).
-- Modify the optimizer logic, hyperparameters, or learning rate schedulers.
-- Adjust loss weighting (`w_pde`, `w_ic`, `w_bc`) or try dynamic weightings (ReLoBRaLo, NTK, etc.).
+- Modify NN architecture (depth, width, activations like Sine, Swish, Fourier Features).
+- Modify collocation point sampling strategies (adaptive, residual-based).
+- Modify optimizer logic, hyperparameters, or learning rate schedulers.
+- Adjust loss weighting (`w_pde`, `w_ic`, `w_bc`) or dynamic weightings.
 
 **What you CANNOT do:**
 - Modify `prepare.py` or `launch.py`.
 - Exceed or remove the `TIME_BUDGET` variable usage in `train.py`.
-- Look at or use the interior ground truth data during training.
+- Look at or use the interior ground truth data (`psi_ref`) during training.
 
-## Logging results
+## The Autonomous Loop (Repeat Forever)
 
-Log to `results.tsv` (tab-separated):
-```tsv
-commit	val_mse	memory_gb	status	description
-```
-*Note: memory_gb = peak_vram_mb / 1024.*
+Execute the following steps sequentially and autonomously. DO NOT stop unless interrupted by the user.
 
-## The experiment loop
-
-LOOP FOREVER:
-1. Brainstorm and implement a new PINN mathematical/architectural improvement in `train.py`.
-2. `git commit -am "experiment description"`
-3. Run the experiment on Kaggle: `uv run launch.py > run.log 2>&1`
-4. Read results: `grep "^val_mse:\|^peak_vram_mb:" run.log`
-5. If the log is empty or lacks `val_mse`, check the tail of `run.log` for Python crash traces. Record as CRASH.
-6. Record the experiment outcome to `results.tsv`.
-7. **Decision:** 
-   - If `val_mse` improved (LOWER is better), KEEP it. 
-   - If worse or crashed, you MUST revert: `git reset --hard HEAD~1`.
-
-**Do not stop.** Keep iterating autonomously until interrupted by the human.
+1. **Brainstorm & Edit**: Think of a new mathematical/architectural improvement. Apply it to `train.py`.
+2. **Commit**: Save your progress locally.
+   `git commit -am "Experiment: <short description>"`
+3. **Run**: Dispatch the job to Kaggle and capture the output.
+   `cmd /c "uv run launch.py > run.log 2>&1"`
+4. **Analyze Output**: Read `run.log` using your file reading tools. 
+   - Look for `val_mse:`, `peak_vram_mb:`, and `KAGGLE RUN OUTPUT`.
+   - If Kaggle failed, timed out, or Python threw a Traceback (e.g., CUDA OutOfMemory), treat it as a CRASH.
+5. **Decide**:
+   - **KEEP**: If `val_mse` is strictly LOWER than the current best baseline, keep the code.
+   - **DISCARD**: If `val_mse` is higher or equal, run `git reset --hard HEAD~1` to revert `train.py`.
+   - **CRASH**: If the script crashed or Kaggle threw an error, run `git reset --hard HEAD~1`.
+6. **Log**: Append a new row to `results.tsv` with the outcome. Example format:
+   `<commit_hash> \t <val_mse> \t <memory_gb> \t <KEEP|DISCARD|CRASH> \t <description>`
+7. **Next Iteration**: Go back to Step 1.
