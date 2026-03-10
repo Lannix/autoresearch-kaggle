@@ -24,3 +24,5 @@ results.tsv
 
 .env
 .vscode/
+kaggle_output/
+kaggle_submit/
