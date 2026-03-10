@@ -7,11 +7,19 @@ import torch
 import numpy as np
 from scipy.io import loadmat
 
-# Internal time budget limit
-TIME_BUDGET = 1140 
+# Жесткий лимит времени для Kaggle T4: 13 минут (780 секунд)
+TIME_BUDGET = 780 
 
-# Path to the dataset on Kaggle
-DATA_PATH = "/kaggle/input/datasets/technolight/matlab-conditions/Field.mat"
+# We are executing on Kaggle, the dataset is mounted here automatically
+DATA_PATH_1 = "/kaggle/input/matlab-conditions/Breather.mat"
+DATA_PATH_2 = "/kaggle/input/technolight/matlab-conditions/Breather.mat"
+
+if os.path.exists(DATA_PATH_1):
+    DATA_PATH = DATA_PATH_1
+elif os.path.exists(DATA_PATH_2):
+    DATA_PATH = DATA_PATH_2
+else:
+    raise FileNotFoundError("Kaggle Dataset not found. Ensure dataset_sources is correct.")
 
 _GROUND_TRUTH = None
 
@@ -20,20 +28,11 @@ def _load_ground_truth():
     if _GROUND_TRUTH is not None:
         return _GROUND_TRUTH
 
-    if not os.path.exists(DATA_PATH):
-        raise FileNotFoundError(f"Dataset not found at {DATA_PATH}")
-
     mat = loadmat(DATA_PATH)
-    
-    # Extract coordinates
     t = np.squeeze(mat["t"]).astype(np.float64)
     theta = np.squeeze(mat["theta"]).astype(np.float64)
-    
-    # Find field matrix (usually 'B' or 'psi')
-    field_key = "B" if "B" in mat else "psi"
-    psi_ref = mat[field_key]
+    psi_ref = mat["B"]
 
-    # Check and fix dimensions if needed
     Nt, Nth = psi_ref.shape
     if (Nt != t.size) and (Nth == t.size) and (Nt == theta.size):
         psi_ref = psi_ref.T
@@ -75,7 +74,7 @@ def evaluate_mse(model_uv_fn, device, dtype=torch.float32):
     th_val = torch.tensor(TH.reshape(-1, 1), device=device, dtype=dtype)
     
     dataset_size = t_val.shape[0]
-    batch_size = 20000 
+    batch_size = 20000  # Батчинг чтобы T4 не упал по памяти
     u_preds, v_preds = [],[]
     
     for i in range(0, dataset_size, batch_size):
