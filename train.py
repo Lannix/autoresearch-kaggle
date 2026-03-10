@@ -104,13 +104,9 @@ def lle_residual(t_in, th_in):
     return u_t - rhs_re, v_t - rhs_im
 
 # ==========================================
-# 4. Training Data Sampling (Adaptive Residual-Based)
+# 4. Training Data Sampling
 # ==========================================
 N_f = 30_000
-N_f_adapt = 50_000  # Larger set for residual computation during adaptation
-N_b = 6000
-
-# Initial random sampling
 t_f_t = t32(np.random.uniform(t_min, t_max, size=(N_f, 1)))
 th_f_t = t32(np.random.uniform(th_min, th_max, size=(N_f, 1)))
 
@@ -118,25 +114,6 @@ N_b = 6000
 t_b_t = t32(np.random.uniform(t_min, t_max, size=(N_b, 1)))
 thL_t = t32(np.ones((N_b, 1)) * th_min)
 thR_t = t32(np.ones((N_b, 1)) * th_max)
-
-# Adaptive sampling function
-def adapt_collocation_points(step):
-    """Resample collocation points focusing on high residual regions."""
-    with torch.no_grad():
-        # Generate a larger set of candidate points
-        t_candidate = t32(np.random.uniform(t_min, t_max, size=(N_f_adapt, 1)))
-        th_candidate = t32(np.random.uniform(th_min, th_max, size=(N_f_adapt, 1)))
-
-        # Compute residual magnitude for each candidate point
-        res_re, res_im = lle_residual(t_candidate, th_candidate)
-        res_magnitude = torch.sqrt(res_re**2 + res_im**2).squeeze()
-
-        # Select top N_f points with highest residual
-        _, indices = torch.topk(res_magnitude, N_f)
-        t_f_t.data = t_candidate[indices].data
-        th_f_t.data = th_candidate[indices].data
-
-        print(f"[Adaptive sampling] Updated collocation points at step {step}")
 
 # ==========================================
 # 5. Loss Functions
@@ -174,11 +151,7 @@ while time.time() - t_start_training < TIME_BUDGET * 0.7:  # Leave 30% time for 
     loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
     loss.backward()
     optimizer.step()
-
-    # Adaptive collocation point resampling every 2000 steps
-    if step % 2000 == 0 and step > 0:
-        adapt_collocation_points(step)
-
+    
     if step % 200 == 0:
         elapsed = time.time() - t_start_training
         print(f"Adam step={step:5d} loss={loss.item():.3e} | elapsed={elapsed:.1f}s")
