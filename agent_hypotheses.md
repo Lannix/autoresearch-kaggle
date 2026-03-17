@@ -132,10 +132,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
 ## Category 7: Optimization & Gradient Balancing
 Fixing gradient pathologies between PDE, IC, and BC losses.
 
-- [ ] **HYP-7.1: NysNewtonCG (NNCG) Optimizer**
+- [x] **HYP-7.1: NysNewtonCG (NNCG) Optimizer**
   - *Idea:* Replace L-BFGS with DeepXDE's advanced PyTorch optimizer: `dde.optimizers.set_NNCG_options()`, then `model.compile("NNCG")`. Highly effective for "stiff" gradients.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.994e-04 val_mse regression]
+  - *Notes:* Kept the hard-periodic HYP-4.1 model and added an NNCG phase after L-BFGS only when more than 120 seconds remained. Kaggle T4 executed the extra phase, but the best checkpoint stayed at the pre-NNCG step, `val_mse` slipped from `6.858262e-01` to `6.862256e-01`, peak VRAM jumped from `1470.5 MB` to `4955.3 MB`, and NNCG emitted PCG non-convergence warnings, so the refinement was not worth the cost.
 
 - [ ] **HYP-7.2: Adam + L-BFGS Ratio Tuning**
   - *Idea:* Adjust the `iterations` limit for Adam and `maxiter` for L-BFGS/NNCG (e.g., 20k Adam + 10k second-order).
