@@ -78,10 +78,10 @@ Leveraging the periodic, frequency-rich nature of the Lugiato-Lefever Equation.
 ## Category 4: Hard Constraints & Boundary Enforcements
 Do not waste network capacity learning what is already known mathematically.
 
-- [ ] **HYP-4.1: Hard Periodic Boundary Conditions (Fourier Features)**
+- [x] **HYP-4.1: Hard Periodic Boundary Conditions (Fourier Features)**
   - *Idea:* Remove `dde.icbc.PeriodicBC`. Instead, force exact spatial periodicity by applying `net.apply_feature_transform(transform_fn)`, where `transform_fn` maps $(t, \theta) \to (t, \cos(\theta), \sin(\theta), \dots)$.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [KEEP] | *Delta:* [-2.602e-01 val_mse improvement]
+  - *Notes:* Replaced the normalization-only transform with `(t_scaled, cos(theta), sin(theta))`, removed periodic BC losses, and trained with only PDE plus IC constraints. On Kaggle T4 this cut `val_mse` from `9.460400e-01` to `6.858262e-01`, reduced peak VRAM from `3733.9 MB` to `1470.5 MB`, and converged faster while preserving the time-budgeted Adam plus L-BFGS flow.
 
 - [ ] **HYP-4.2: Hard Initial Conditions (Time-based Ansatz)**
   - *Idea:* Remove `dde.icbc.IC`. Force the output to exactly match the IC at $t=0$ using `net.apply_output_transform(transform_fn)`. E.g., `Output = IC_interp(theta) + (1 - exp(-c*t)) * NN_out`.
