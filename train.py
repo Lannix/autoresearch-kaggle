@@ -91,7 +91,6 @@ data = dde.data.TimePDE(
     num_domain=30000,
     num_boundary=6000,
     num_initial=th0_arr.shape[0],
-    train_distribution="pseudo",
 )
 
 # ==========================================
@@ -140,15 +139,10 @@ loss_weights =[3.0, 3.0, 5.0, 5.0, 5.0, 5.0, 50.0, 50.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
-resampler_callback = dde.callbacks.PDEPointResampler(period=500, pde_points=True, bc_points=False)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(
-        iterations=100000,
-        callbacks=[time_callback_adam, resampler_callback],
-        display_every=1000,
-    )
+    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
