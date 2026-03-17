@@ -142,10 +142,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+3.994e-04 val_mse regression]
   - *Notes:* Kept the hard-periodic HYP-4.1 model and added an NNCG phase after L-BFGS only when more than 120 seconds remained. Kaggle T4 executed the extra phase, but the best checkpoint stayed at the pre-NNCG step, `val_mse` slipped from `6.858262e-01` to `6.862256e-01`, peak VRAM jumped from `1470.5 MB` to `4955.3 MB`, and NNCG emitted PCG non-convergence warnings, so the refinement was not worth the cost.
 
-- [ ] **HYP-7.2: Adam + L-BFGS Ratio Tuning**
+- [x] **HYP-7.2: Adam + L-BFGS Ratio Tuning**
   - *Idea:* Adjust the `iterations` limit for Adam and `maxiter` for L-BFGS/NNCG (e.g., 20k Adam + 10k second-order).
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [KEEP] | *Delta:* [-5.042e-04 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-7.7 baseline, reduced Adam to 60% of the training budget and added an explicit helper that updates DeepXDE's cached PyTorch `iter_per_step` alongside the total L-BFGS budget. Kaggle T4 reached the best Adam checkpoint around step `11000`, then improved further during short L-BFGS bursts to `val_mse = 6.828914e-01`, beating `6.833956e-01` while keeping peak VRAM flat at `1470.6 MB` and shortening total training time to `1140.4s`.
 
 - [ ] **HYP-7.3: Self-Adaptive PINN (Learnable Loss Weights)**
   - *Idea:* Make the loss weights trainable. Create `w_pde = dde.Variable(1.0)` and pass it to `model.compile(external_trainable_variables=[w_pde])`. Multiply the residual by this weight in the `pde` function to setup a min-max adversarial training dynamic.
