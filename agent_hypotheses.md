@@ -167,10 +167,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-7.7: Callback-Safe L-BFGS and Lean IC Bookkeeping**
+- [x] **HYP-7.7: Callback-Safe L-BFGS and Lean IC Bookkeeping**
   - *Idea:* Limit PyTorch L-BFGS internal `maxiter` so DeepXDE callbacks can enforce time limits, run many outer L-BFGS iterations explicitly, and remove redundant randomly generated initial points so only the `PointSetBC` IC data is used.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [KEEP] | *Delta:* [-6.418e-04 val_mse improvement]
+  - *Notes:* Replaced the fragile IC coordinate assembly with `np.column_stack`, removed redundant `num_initial` sampling, detached evaluation inputs when gradients are not needed, and switched the optimizer setup to a bounded L-BFGS configuration after Adam. On Kaggle T4 this improved `val_mse` from `6.840374e-01` to `6.833956e-01`, kept peak VRAM essentially flat at `1469.9 MB`, and reduced total training time to `1338.3s`.
 
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
