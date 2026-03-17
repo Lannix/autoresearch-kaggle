@@ -1,3 +1,4 @@
 commit	val_mse	memory_gb	status	description
 541306c	9.520277e-01	3.65	DISCARD	HYP-6.1 pseudo collocation resampling every 500 Adam steps
 d4d8f96	6.858262e-01	1.44	KEEP	HYP-4.1 hard periodic feature transform with sin/cos theta inputs
+7dcb213	9.290239e-01	1.35	DISCARD	HYP-4.2 hard initial-condition output ansatz with periodic interpolation
