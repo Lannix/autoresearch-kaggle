@@ -87,7 +87,7 @@ data = dde.data.TimePDE(
 # ==========================================
 # 5. Neural Network Architecture
 # ==========================================
-TIME_HARMONICS = 1
+TIME_HARMONICS = 0
 THETA_HARMONICS = 2
 INPUT_DIM = 1 + 2 * TIME_HARMONICS + 2 * THETA_HARMONICS
 
