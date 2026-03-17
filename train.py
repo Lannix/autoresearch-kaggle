@@ -87,8 +87,8 @@ data = dde.data.TimePDE(
 # ==========================================
 # 5. Neural Network Architecture
 # ==========================================
-TIME_HARMONICS = 0
-THETA_HARMONICS = 2
+TIME_HARMONICS = 1
+THETA_HARMONICS = 1
 INPUT_DIM = 1 + 2 * TIME_HARMONICS + 2 * THETA_HARMONICS
 
 net = dde.nn.FNN([INPUT_DIM] + [128] * 5 + [2], "tanh", "Glorot uniform")
