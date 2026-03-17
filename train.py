@@ -144,8 +144,22 @@ try:
     
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(callbacks=[time_callback_lbfgs], display_every=100)
-    
+
     total_training_time = time.time() - t_start_training
+    remaining_time = max_train_time - total_training_time
+
+    if remaining_time > 120:
+        print("\n[INFO] Phase 3: NNCG optimization")
+        dde.optimizers.set_NNCG_options(rank=30, mu=1e-1, updatefreq=20, lsfun="armijo", verbose=False)
+        time_callback_nncg = TimeBasedEarlyStopping(max_train_time)
+        time_callback_nncg.start_time = t_start_training
+        model.compile("NNCG", loss_weights=loss_weights)
+        losshistory, train_state = model.train(
+            iterations=2000,
+            callbacks=[time_callback_nncg],
+            display_every=100,
+        )
+        total_training_time = time.time() - t_start_training
 
     # ==========================================
     # 7. Final Evaluation
