@@ -5,3 +5,4 @@ d4d8f96	6.858262e-01	1.44	KEEP	HYP-4.1 hard periodic feature transform with sin/
 a883cfd	6.862256e-01	4.84	DISCARD	HYP-7.1 NNCG refinement after L-BFGS on the hard-periodic baseline
 52cd290	6.940603e-01	1.41	DISCARD	HYP-4.3 harmonic search with time=1 theta=2
 c268446	6.908429e-01	1.44	DISCARD	HYP-4.3 harmonic search with time=0 theta=2
+11221c8	6.940841e-01	1.40	DISCARD	HYP-4.3 harmonic search with time=1 theta=1
