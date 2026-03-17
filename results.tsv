@@ -4,3 +4,4 @@ d4d8f96	6.858262e-01	1.44	KEEP	HYP-4.1 hard periodic feature transform with sin/
 7dcb213	9.290239e-01	1.35	DISCARD	HYP-4.2 hard initial-condition output ansatz with periodic interpolation
 a883cfd	6.862256e-01	4.84	DISCARD	HYP-7.1 NNCG refinement after L-BFGS on the hard-periodic baseline
 52cd290	6.940603e-01	1.41	DISCARD	HYP-4.3 harmonic search with time=1 theta=2
+c268446	6.908429e-01	1.44	DISCARD	HYP-4.3 harmonic search with time=0 theta=2

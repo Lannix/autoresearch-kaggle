@@ -90,8 +90,8 @@ Do not waste network capacity learning what is already known mathematically.
 
 - [x] **HYP-4.3: Multi-Harmonic Feature Search for Time and Theta**
   - *Idea:* Generalize the kept hard-periodic feature transform into a Fourier bank with configurable harmonic counts for both normalized time and angle, then search for the best `(t_harmonics, theta_harmonics)` pair under the same DeepXDE training budget.
-  - *Outcome:* [DISCARD] | *Delta:* [+8.234e-03 val_mse regression for `(1, 2)`]
-  - *Notes:* First sweep point `(time_harmonics=1, theta_harmonics=2)` widened the input transform to 7 channels and trained cleanly, but `val_mse` worsened from `6.858262e-01` to `6.940603e-01` while only slightly changing VRAM (`1448.2 MB`). The search is continuing from the hard-periodic baseline, but this specific combo is not an improvement.
+  - *Outcome:* [DISCARD] | *Delta:* [+5.017e-03 best regression so far]
+  - *Notes:* Sweep results so far: `(1, 2)` regressed to `6.940603e-01` and `(0, 2)` regressed to `6.908429e-01`, both worse than the kept `(0, 1)` baseline at `6.858262e-01`. Extra theta harmonics alone did not help, while adding both time and theta harmonics was even worse; the search is continuing with time-only harmonics next.
 
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
