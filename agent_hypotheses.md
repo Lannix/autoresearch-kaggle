@@ -88,6 +88,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [DISCARD] | *Delta:* [+2.432e-01 val_mse regression]
   - *Notes:* Added a periodic linear interpolation of the known initial slice and enforced `psi(theta, t0)` exactly via `apply_output_transform`, removing the IC point-set losses. The run stayed stable and used slightly less VRAM, but PDE training plateaued near a total loss of `2.09` and `val_mse` worsened from `6.858262e-01` to `9.290239e-01`, suggesting the hard ansatz made the solution manifold too restrictive or introduced poor derivative behavior.
 
+- [ ] **HYP-4.3: Multi-Harmonic Feature Search for Time and Theta**
+  - *Idea:* Generalize the kept hard-periodic feature transform into a Fourier bank with configurable harmonic counts for both normalized time and angle, then search for the best `(t_harmonics, theta_harmonics)` pair under the same DeepXDE training budget.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
