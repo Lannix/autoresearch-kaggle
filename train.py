@@ -84,7 +84,6 @@ data = dde.data.TimePDE(
     num_domain=30000,
     num_boundary=0,
     num_initial=th0_arr.shape[0],
-    train_distribution="Sobol",
 )
 
 # ==========================================
