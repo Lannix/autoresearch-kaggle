@@ -129,10 +129,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
+- [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.465e-03 val_mse regression]
+  - *Notes:* Tested `train_distribution="Sobol"` on top of the kept causal-weighted HYP-7.4 model. The run completed normally but `val_mse` worsened from `6.840374e-01` to `6.865027e-01`, and Kaggle emitted Sobol balance warnings because the point counts were not powers of two, so this low-discrepancy sampling change did not help the current setup.
 
 ## Category 7: Optimization & Gradient Balancing
 Fixing gradient pathologies between PDE, IC, and BC losses.

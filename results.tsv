@@ -8,3 +8,4 @@ c268446	6.908429e-01	1.44	DISCARD	HYP-4.3 harmonic search with time=0 theta=2
 11221c8	6.940841e-01	1.40	DISCARD	HYP-4.3 harmonic search with time=1 theta=1
 2841bb2	6.951220e-01	1.49	DISCARD	HYP-4.3 harmonic search with time=25 theta=5
 96c3f8f	6.840374e-01	1.44	KEEP	HYP-7.4 causal PDE weighting on the hard-periodic baseline
+6edc9b9	6.865027e-01	1.44	DISCARD	HYP-6.4 Sobol collocation sampling on the causal-weighted model
