@@ -109,10 +109,10 @@ Guide the network using known asymptotic behaviors of LLE.
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
 
-- [ ] **HYP-6.1: Automated Collocation Resampling**
+- [x] **HYP-6.1: Automated Collocation Resampling**
   - *Idea:* Use `dde.callbacks.PDEPointResampler(period=1000)` to routinely redraw the collocation points randomly.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+5.988e-03 val_mse regression]
+  - *Notes:* Switched `TimePDE` sampling to `train_distribution="pseudo"` and resampled PDE points every 500 Adam steps. The Kaggle T4 run finished cleanly, but `val_mse` worsened from `9.460400e-01` to `9.520277e-01`, with a larger train/test gap during L-BFGS, so the extra collocation churn did not improve generalization here.
 
 - [ ] **HYP-6.2: Residual-Based Adaptive Refinement (RAR)**
   - *Idea:* Periodically evaluate the PDE residual on a dense candidate grid, pick the points with the highest error, and manually add them using `data.add_anchors(X_new)`.
