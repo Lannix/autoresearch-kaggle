@@ -69,17 +69,8 @@ def pde(x, y):
     return[res_u, res_v]
 
 # ==========================================
-# 4. Boundary and Initial Conditions
+# 4. Initial Conditions
 # ==========================================
-def boundary(_, on_boundary):
-    return on_boundary
-
-# Periodic conditions for value and first spatial derivative
-bc_u = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=0, component=0)
-bc_v = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=0, component=1)
-bc_u_x = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=1, component=0)
-bc_v_x = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=1, component=1)
-
 # Points initialization setup (hstack forms [theta, t] matching our geomtime)
 ic_points = np.hstack((th0_arr, np.full_like(th0_arr, t0)))
 ic_u = dde.icbc.PointSetBC(ic_points, u0, component=0)
@@ -87,21 +78,24 @@ ic_v = dde.icbc.PointSetBC(ic_points, v0, component=1)
 
 data = dde.data.TimePDE(
     geomtime,
-    pde,[bc_u, bc_v, bc_u_x, bc_v_x, ic_u, ic_v],
+    pde, [ic_u, ic_v],
     num_domain=30000,
-    num_boundary=6000,
+    num_boundary=0,
     num_initial=th0_arr.shape[0],
 )
 
 # ==========================================
 # 5. Neural Network Architecture
 # ==========================================
-net = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
+net = dde.nn.FNN([3] + [128] * 5 + [2], "tanh", "Glorot uniform")
 
 def feature_transform(x):
-    t_m = torch.tensor([th_min, t_min], device=x.device, dtype=x.dtype)
-    t_M = torch.tensor([th_max, t_max], device=x.device, dtype=x.dtype)
-    return 2.0 * (x - t_m) / (t_M - t_m + 1e-12) - 1.0
+    theta = x[:, 0:1]
+    time_coord = x[:, 1:2]
+    t_center = torch.tensor((t_min + t_max) * 0.5, device=x.device, dtype=x.dtype)
+    t_scale = torch.tensor((t_max - t_min) * 0.5 + 1e-12, device=x.device, dtype=x.dtype)
+    time_scaled = (time_coord - t_center) / t_scale
+    return torch.cat((time_scaled, torch.cos(theta), torch.sin(theta)), dim=1)
 
 net.apply_feature_transform(feature_transform)
 model = dde.Model(data, net)
@@ -133,9 +127,9 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to data array: 
-#[pde_u, pde_v, bc_u, bc_v, bc_u_x, bc_v_x, ic_u, ic_v]
-loss_weights =[3.0, 3.0, 5.0, 5.0, 5.0, 5.0, 50.0, 50.0]
+# Loss weights order corresponds to data array:
+#[pde_u, pde_v, ic_u, ic_v]
+loss_weights =[3.0, 3.0, 50.0, 50.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
