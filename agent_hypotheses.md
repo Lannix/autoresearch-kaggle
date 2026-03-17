@@ -167,6 +167,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
+- [ ] **HYP-7.7: Callback-Safe L-BFGS and Lean IC Bookkeeping**
+  - *Idea:* Limit PyTorch L-BFGS internal `maxiter` so DeepXDE callbacks can enforce time limits, run many outer L-BFGS iterations explicitly, and remove redundant randomly generated initial points so only the `PointSetBC` IC data is used.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
 - [ ] **HYP-8.1: Mixed Precision Training (FP16/FP32)**

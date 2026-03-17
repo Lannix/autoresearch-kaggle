@@ -73,8 +73,13 @@ def pde(x, y):
 # ==========================================
 # 4. Initial Conditions
 # ==========================================
-# Points initialization setup (hstack forms [theta, t] matching our geomtime)
-ic_points = np.hstack((th0_arr, np.full_like(th0_arr, t0)))
+# Build a stable (N, 2) coordinate matrix even if the IC arrays become 1D.
+ic_points = np.column_stack(
+    (
+        np.asarray(th0_arr).reshape(-1),
+        np.full(th0_arr.shape[0], t0, dtype=th0_arr.dtype),
+    )
+)
 ic_u = dde.icbc.PointSetBC(ic_points, u0, component=0)
 ic_v = dde.icbc.PointSetBC(ic_points, v0, component=1)
 
@@ -83,7 +88,7 @@ data = dde.data.TimePDE(
     pde, [ic_u, ic_v],
     num_domain=30000,
     num_boundary=0,
-    num_initial=th0_arr.shape[0],
+    num_initial=0,
 )
 
 # ==========================================
@@ -123,9 +128,11 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
 
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
-    x = torch.cat([th_in, t_in], dim=1)
+    x = torch.cat((th_in, t_in), dim=1)
     if need_x:
-        x.requires_grad_(True)
+        x = x.requires_grad_(True)
+    else:
+        x = x.detach()
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
@@ -143,9 +150,15 @@ try:
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
-    
+
+    # Force PyTorch LBFGS to return to DeepXDE's outer loop frequently so callbacks can stop on time.
+    dde.optimizers.config.set_LBFGS_options(maxiter=100)
     model.compile("L-BFGS", loss_weights=loss_weights)
-    losshistory, train_state = model.train(callbacks=[time_callback_lbfgs], display_every=100)
+    losshistory, train_state = model.train(
+        iterations=10000,
+        callbacks=[time_callback_lbfgs],
+        display_every=10,
+    )
     
     total_training_time = time.time() - t_start_training
 
