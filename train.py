@@ -112,7 +112,9 @@ model = dde.Model(data, net)
 # ==========================================
 EVAL_RESERVE = 45  
 max_train_time = TIME_BUDGET - EVAL_RESERVE
-adam_time_limit = max_train_time * 0.70  
+adam_time_limit = max_train_time * 0.60
+lbfgs_total_iters = 5000
+lbfgs_inner_iters = 250
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
@@ -125,6 +127,18 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
     def on_epoch_end(self):
         if time.time() - self.start_time > self.max_duration:
             self.model.stop_training = True
+
+
+def configure_pytorch_lbfgs(total_iters, inner_iters):
+    # DeepXDE caches PyTorch's per-step L-BFGS budget separately from maxiter.
+    dde.optimizers.config.set_LBFGS_options(maxiter=total_iters)
+    lbfgs_options = dde.optimizers.config.LBFGS_options
+    inner_iters = min(inner_iters, total_iters)
+    lbfgs_options["iter_per_step"] = inner_iters
+    lbfgs_options["fun_per_step"] = max(
+        1,
+        lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
+    )
 
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
@@ -151,8 +165,8 @@ try:
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
 
-    # Force PyTorch LBFGS to return to DeepXDE's outer loop frequently so callbacks can stop on time.
-    dde.optimizers.config.set_LBFGS_options(maxiter=100)
+    # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
+    configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
