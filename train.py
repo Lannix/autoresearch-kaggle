@@ -65,8 +65,10 @@ def pde(x, y):
     
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - S * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + S * u)
-    
-    return[res_u, res_v]
+    time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
+    causal_weight = torch.exp(-2.0 * time_frac)
+
+    return [causal_weight * res_u, causal_weight * res_v]
 
 # ==========================================
 # 4. Initial Conditions
