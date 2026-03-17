@@ -68,13 +68,20 @@ def pde(x, y):
     
     return[res_u, res_v]
 
+# ==========================================
+# 4. Initial Conditions
+# ==========================================
+# Points initialization setup (hstack forms [theta, t] matching our geomtime)
+ic_points = np.hstack((th0_arr, np.full_like(th0_arr, t0)))
+ic_u = dde.icbc.PointSetBC(ic_points, u0, component=0)
+ic_v = dde.icbc.PointSetBC(ic_points, v0, component=1)
+
 data = dde.data.TimePDE(
     geomtime,
-    pde,
-    [],
+    pde, [ic_u, ic_v],
     num_domain=30000,
     num_boundary=0,
-    num_initial=0,
+    num_initial=th0_arr.shape[0],
 )
 
 # ==========================================
@@ -90,49 +97,7 @@ def feature_transform(x):
     time_scaled = (time_coord - t_center) / t_scale
     return torch.cat((time_scaled, torch.cos(theta), torch.sin(theta)), dim=1)
 
-ic_tensor_cache = {}
-
-def get_ic_tensors(device, dtype):
-    key = (device.type, device.index, str(dtype))
-    if key not in ic_tensor_cache:
-        ic_tensor_cache[key] = (
-            torch.as_tensor(th0_arr[:, 0], device=device, dtype=dtype),
-            torch.as_tensor(u0[:, 0], device=device, dtype=dtype),
-            torch.as_tensor(v0[:, 0], device=device, dtype=dtype),
-        )
-    return ic_tensor_cache[key]
-
-def periodic_interp(theta, theta_grid, values):
-    theta_wrapped = torch.remainder(theta - th_min, th_max - th_min) + th_min
-    idx = torch.bucketize(theta_wrapped[:, 0], theta_grid, right=True)
-    n = theta_grid.shape[0]
-    left_idx = (idx - 1) % n
-    right_idx = idx % n
-
-    theta_left = theta_grid[left_idx].unsqueeze(1)
-    theta_right = theta_grid[right_idx].unsqueeze(1)
-    wrap_mask = idx == n
-    theta_right = torch.where(
-        wrap_mask.unsqueeze(1),
-        theta_right + (th_max - th_min),
-        theta_right,
-    )
-    alpha = (theta_wrapped - theta_left) / (theta_right - theta_left + 1e-12)
-    value_left = values[left_idx].unsqueeze(1)
-    value_right = values[right_idx].unsqueeze(1)
-    return value_left + alpha * (value_right - value_left)
-
-def output_transform(x, y):
-    theta = x[:, 0:1]
-    time_coord = x[:, 1:2]
-    theta_grid, u0_grid, v0_grid = get_ic_tensors(x.device, x.dtype)
-    u0_theta = periodic_interp(theta, theta_grid, u0_grid)
-    v0_theta = periodic_interp(theta, theta_grid, v0_grid)
-    growth = 1.0 - torch.exp(-2.0 * torch.clamp(time_coord - t0, min=0.0))
-    return torch.cat((u0_theta, v0_theta), dim=1) + growth * y
-
 net.apply_feature_transform(feature_transform)
-net.apply_output_transform(output_transform)
 model = dde.Model(data, net)
 
 # ==========================================
@@ -163,8 +128,8 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds to data array:
-#[pde_u, pde_v]
-loss_weights =[3.0, 3.0]
+#[pde_u, pde_v, ic_u, ic_v]
+loss_weights =[3.0, 3.0, 50.0, 50.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
