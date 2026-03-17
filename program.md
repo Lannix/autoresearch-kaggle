@@ -1,6 +1,6 @@
 # autoresearch-pinn (Windows 10 Edition)
 
-This is an experiment to have the AI autonomously optimize a Physics-Informed Neural Network (PINN) for solving the Lugiato-Lefever Equation (LLE) strictly on a Kaggle T4 GPU.
+This is an experiment to have the AI autonomously optimize a Physics-Informed Neural Network (PINN) for solving the Lugiato-Lefever Equation (LLE) strictly on a Kaggle T4 GPU utilizing the DeepXDE framework.
 
 **ENVIRONMENT:** You are operating on a Windows 10 system using CMD/PowerShell. Use Windows-compatible terminal commands or your built-in file editing/reading tools.
 
@@ -26,12 +26,12 @@ Use DeepXDE (stable) in Kaggle.
 ## Experimentation Rules
 
 You will modify **`train.py`** to improve the PINN. Each experiment is sent to Kaggle using `launch.py`. 
-The Kaggle kernel runs with an explicit `NVIDIA_TESLA_T4` GPU and has an internal time budget of ~13 minutes. Total turnaround per run is ~15-20 mins. You can increase the training time to 40 minutes if the model changes significantly and severely under-traines in 13 minutes, but be logical, as other hypotheses were tested with different training times.
+The Kaggle kernel runs with an explicit `NVIDIA_TESLA_T4` GPU and has an internal time budget of ~30 minutes. Total turnaround per run is ~35-40 mins. You can adjust the training time up to 45 minutes if the model changes significantly and severely under-traines in 30 minutes, but be logical, as other hypotheses were tested with different training times.
 
 **What you CAN do (in `train.py`):**
-- Modify NN architecture (e.g., activations, skip connections, Fourier features).
-- Modify collocation point sampling strategies (e.g., adaptive refinement, importance sampling).
-- Modify optimizer logic, learning rate schedulers, or the balance between Adam and L-BFGS.
+- Modify NN architecture (e.g., activations, skip connections, Fourier features) strictly leveraging DeepXDE structure.
+- Modify collocation point sampling strategies via DeepXDE dataset objects.
+- Modify optimizer logic, learning rate schedulers, or the balance between Adam and L-BFGS utilizing `dde.callbacks`.
 - Adjust loss weighting (static, dynamic, or soft attention mechanisms).
 - **Be Creative:** You are an autonomous AI researcher. You can pick an idea from `agent_hypotheses.md`, combine multiple ideas, or invent completely new mathematical and architectural approaches that are not on the list.
 

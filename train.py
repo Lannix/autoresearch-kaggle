@@ -1,33 +1,29 @@
 """
-Autoresearch PINN training script for LLE. Single-GPU, single-file.
+Autoresearch PINN training script for LLE using DeepXDE.
 Contains internal time-management to guarantee final evaluation before Kaggle timeout.
 """
+import os
+os.environ["DDE_BACKEND"] = "pytorch"
 
 import time
 import traceback
 import sys
 import numpy as np
 import torch
-import torch.nn as nn
+import deepxde as dde
+
 from prepare import TIME_BUDGET, get_training_setup, evaluate_mse
 
 # ==========================================
 # 1. Initialization and Setup
 # ==========================================
-torch.manual_seed(42)
-np.random.seed(42)
-torch.cuda.manual_seed_all(42)
+dde.config.set_default_float("float32")
+dde.config.set_random_seed(42)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DTYPE = torch.float32
-torch.set_default_dtype(DTYPE)
-
 print(f"[INFO] Using device: {device}")
 if torch.cuda.is_available():
     print(f"[INFO] GPU Name: {torch.cuda.get_device_name(0)}")
-
-def t32(x):
-    return torch.tensor(x, device=device, dtype=DTYPE) if not isinstance(x, torch.Tensor) else x.to(device=device, dtype=DTYPE)
 
 t_start_training = time.time()
 
@@ -39,179 +35,143 @@ zeta = setup["params"]["zeta"]
 f = setup["params"]["f"]
 
 ic = setup["initial_conditions"]
-t0_t = t32(np.ones((ic["th0_arr"].shape[0], 1), dtype=np.float32) * ic["t0"])
-th0_t = t32(ic["th0_arr"])
-u0_t = t32(ic["u0"])
-v0_t = t32(ic["v0"])
-
-t_min_t, t_max_t = t32(t_min), t32(t_max)
-th_min_t, th_max_t = t32(th_min), t32(th_max)
-
-def norm_t(x): return 2.0 * (x - t_min_t) / (t_max_t - t_min_t + 1e-12) - 1.0
-def norm_th(x): return 2.0 * (x - th_min_t) / (th_max_t - th_min_t + 1e-12) - 1.0
+t0 = ic["t0"]
+th0_arr = ic["th0_arr"]
+u0 = ic["u0"]
+v0 = ic["v0"]
 
 # ==========================================
-# 2. Neural Network Architecture
+# 2. DeepXDE Geometry and Domain
 # ==========================================
-class MLP(nn.Module):
-    def __init__(self, in_dim=2, out_dim=2, width=128, depth=5):
-        super().__init__()
-        layers = [nn.Linear(in_dim, width), nn.Tanh()]
-        for _ in range(depth - 1):
-            layers += [nn.Linear(width, width), nn.Tanh()]
-        layers += [nn.Linear(width, out_dim)]
-        self.net = nn.Sequential(*layers)
-
-        for m in self.net:
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.zeros_(m.bias)
-
-    def forward(self, x):
-        return self.net(x)
-
-model = MLP(width=128, depth=5).to(device=device, dtype=DTYPE)
+geom = dde.geometry.Interval(th_min, th_max)
+timedomain = dde.geometry.TimeDomain(t_min, t_max)
+geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
 # ==========================================
-# 3. Physics & Gradients
+# 3. Physics / LLE Residual
 # ==========================================
-def gradients(y, x):
-    return torch.autograd.grad(y, x, grad_outputs=torch.ones_like(y), create_graph=True, retain_graph=True)[0]
-
-def model_uv(t_in, th_in, need_x=False):
-    tn, thn = norm_t(t_in), norm_th(th_in)
-    x = torch.cat([tn, thn], dim=1)
-    if need_x: x.requires_grad_(True)
-    uv = model(x)
-    return uv[:, 0:1], uv[:, 1:2], x
-
-dtn_dt_t = t32(2.0 / (t_max - t_min + 1e-12))
-dthn_dth_t = t32(2.0 / (th_max - th_min + 1e-12))
-zeta_t, f_t = t32(zeta), t32(f)
-
-def lle_residual(t_in, th_in):
-    u, v, x = model_uv(t_in, th_in, need_x=True)
-
-    du_dx = gradients(u, x)
-    dv_dx = gradients(v, x)
-    u_tn, u_thn = du_dx[:, 0:1], du_dx[:, 1:2]
-    v_tn, v_thn = dv_dx[:, 0:1], dv_dx[:, 1:2]
-
-    u_thn2 = gradients(u_thn, x)[:, 1:2]
-    v_thn2 = gradients(v_thn, x)[:, 1:2]
-
-    u_t, v_t = u_tn * dtn_dt_t, v_tn * dtn_dt_t
-    u_th2, v_th2 = u_thn2 * (dthn_dth_t ** 2), v_thn2 * (dthn_dth_t ** 2)
-
+def pde(x, y):
+    # x is [theta, t]
+    # y is [u, v]
+    u, v = y[:, 0:1], y[:, 1:2]
+    
+    du_dt = dde.grad.jacobian(y, x, i=0, j=1)
+    dv_dt = dde.grad.jacobian(y, x, i=1, j=1)
+    
+    du_dth2 = dde.grad.hessian(y, x, component=0, i=0, j=0)
+    dv_dth2 = dde.grad.hessian(y, x, component=1, i=0, j=0)
+    
     S = u**2 + v**2
-    rhs_re = -(u - zeta_t * v) - 0.5 * v_th2 - S * v + f_t
-    rhs_im = -(v + zeta_t * u) + 0.5 * u_th2 + S * u
-
-    return u_t - rhs_re, v_t - rhs_im
-
-# ==========================================
-# 4. Training Data Sampling
-# ==========================================
-N_f = 30_000
-t_f_t = t32(np.random.uniform(t_min, t_max, size=(N_f, 1)))
-th_f_t = t32(np.random.uniform(th_min, th_max, size=(N_f, 1)))
-
-N_b = 6000
-t_b_t = t32(np.random.uniform(t_min, t_max, size=(N_b, 1)))
-thL_t = t32(np.ones((N_b, 1)) * th_min)
-thR_t = t32(np.ones((N_b, 1)) * th_max)
+    
+    res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - S * v + f)
+    res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + S * u)
+    
+    return[res_u, res_v]
 
 # ==========================================
-# 5. Loss Functions
+# 4. Boundary and Initial Conditions
 # ==========================================
-def loss_pde():
-    res_re, res_im = lle_residual(t_f_t, th_f_t)
-    return (res_re**2).mean() + (res_im**2).mean()
+def boundary(_, on_boundary):
+    return on_boundary
 
-def loss_ic():
-    u_pred, v_pred, _ = model_uv(t0_t, th0_t, need_x=False)
-    return ((u_pred - u0_t)**2).mean() + ((v_pred - v0_t)**2).mean()
+# Periodic conditions for value and first spatial derivative
+bc_u = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=0, component=0)
+bc_v = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=0, component=1)
+bc_u_x = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=1, component=0)
+bc_v_x = dde.icbc.PeriodicBC(geomtime, 0, boundary, derivative_order=1, component=1)
 
-def loss_periodic():
-    uL, vL, xL = model_uv(t_b_t, thL_t, need_x=True)
-    uR, vR, xR = model_uv(t_b_t, thR_t, need_x=True)
+# Points initialization setup (hstack forms [theta, t] matching our geomtime)
+ic_points = np.hstack((th0_arr, np.full_like(th0_arr, t0)))
+ic_u = dde.icbc.PointSetBC(ic_points, u0, component=0)
+ic_v = dde.icbc.PointSetBC(ic_points, v0, component=1)
 
-    duL_dth = gradients(uL, xL)[:, 1:2] * dthn_dth_t
-    dvL_dth = gradients(vL, xL)[:, 1:2] * dthn_dth_t
-    duR_dth = gradients(uR, xR)[:, 1:2] * dthn_dth_t
-    dvR_dth = gradients(vR, xR)[:, 1:2] * dthn_dth_t
-
-    return ((uL - uR)**2).mean() + ((vL - vR)**2).mean() + ((duL_dth - duR_dth)**2).mean() + ((dvL_dth - dvR_dth)**2).mean()
+data = dde.data.TimePDE(
+    geomtime,
+    pde,[bc_u, bc_v, bc_u_x, bc_v_x, ic_u, ic_v],
+    num_domain=30000,
+    num_boundary=6000,
+    num_initial=th0_arr.shape[0],
+)
 
 # ==========================================
-# 6. Training Loop (Time Constrained)
+# 5. Neural Network Architecture
 # ==========================================
-w_pde, w_ic, w_bc = 3.0, 50.0, 5.0
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+net = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
 
-# Reserve 45 seconds for final evaluation to avoid Kaggle timeout
+def feature_transform(x):
+    t_m = torch.tensor([th_min, t_min], device=x.device, dtype=x.dtype)
+    t_M = torch.tensor([th_max, t_max], device=x.device, dtype=x.dtype)
+    return 2.0 * (x - t_m) / (t_M - t_m + 1e-12) - 1.0
+
+net.apply_feature_transform(feature_transform)
+model = dde.Model(data, net)
+
+# ==========================================
+# 6. Training Setup
+# ==========================================
 EVAL_RESERVE = 45  
 max_train_time = TIME_BUDGET - EVAL_RESERVE
 adam_time_limit = max_train_time * 0.70  
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
-step = 0
+class TimeBasedEarlyStopping(dde.callbacks.Callback):
+    def __init__(self, max_duration):
+        super().__init__()
+        self.max_duration = max_duration
+        self.start_time = time.time()
+        
+    def on_epoch_end(self):
+        if time.time() - self.start_time > self.max_duration:
+            self.model.stop_training = True
+
+def model_uv(t_in, th_in, need_x=False):
+    # DeepXDE inputs are [theta, t]
+    x = torch.cat([th_in, t_in], dim=1)
+    if need_x:
+        x.requires_grad_(True)
+    uv = net(x)
+    return uv[:, 0:1], uv[:, 1:2], x
+
+# Loss weights order corresponds to data array: 
+#[pde_u, pde_v, bc_u, bc_v, bc_u_x, bc_v_x, ic_u, ic_v]
+loss_weights =[3.0, 3.0, 5.0, 5.0, 5.0, 5.0, 50.0, 50.0]
+model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+
+time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
+
 try:
-    # ------------------ ADAM ------------------
-    while (time.time() - t_start_training) < adam_time_limit:
-        optimizer.zero_grad(set_to_none=True)
-        loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
-        loss.backward()
-        optimizer.step()
-        
-        if step % 200 == 0:
-            elapsed = time.time() - t_start_training
-            print(f"Adam step={step:5d} loss={loss.item():.3e} | elapsed={elapsed:.1f}s")
-        step += 1
-
-    # ------------------ L-BFGS ------------------
-    print(f"\n[INFO] Switching to L-BFGS refinement. Elapsed: {time.time() - t_start_training:.1f}s")
-    lbfgs = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=20, history_size=50, line_search_fn="strong_wolfe")
-
-    def closure():
-        lbfgs.zero_grad(set_to_none=True)
-        loss = w_pde * loss_pde() + w_ic * loss_ic() + w_bc * loss_periodic()
-        loss.backward()
-        return loss
-
-    while (time.time() - t_start_training) < max_train_time:
-        prev_loss = closure().item()
-        lbfgs.step(closure)
-        new_loss = closure().item()
-        
-        print(f"L-BFGS loss: {new_loss:.3e} | elapsed={time.time() - t_start_training:.1f}s")
-        
-        # Stop early if converged
-        if abs(prev_loss - new_loss) < 1e-8:
-            print("[INFO] L-BFGS converged.")
-            break
-
+    print("\n[INFO] Phase 1: Adam optimization")
+    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
+    
+    print("\n[INFO] Phase 2: L-BFGS optimization")
+    time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
+    time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
+    
+    model.compile("L-BFGS", loss_weights=loss_weights)
+    losshistory, train_state = model.train(callbacks=[time_callback_lbfgs], display_every=100)
+    
     total_training_time = time.time() - t_start_training
 
     # ==========================================
-    # 7. Final Evaluation (Mandatory)
+    # 7. Final Evaluation
     # ==========================================
     print(f"\n[TIME UP / CONVERGED] Mandatory evaluation at {total_training_time:.1f}s ...")
-    val_mse = evaluate_mse(model_uv, device, dtype=DTYPE)
+    
+    net.eval()
+    val_mse = evaluate_mse(model_uv, device, dtype=torch.float32)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
-    num_params = sum(p.numel() for p in model.parameters())
+    num_params = sum(p.numel() for p in net.parameters())
 
     print("\n---")
     print(f"val_mse:          {val_mse:.6e}")
     print(f"training_seconds: {total_training_time:.1f}")
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-    print(f"num_steps:        {step}")
+    print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
     print("---")
 
 except Exception as e:
-    # Catching exceptions to provide a visible Traceback for the agent before exiting
     print("\n[CRITICAL ERROR] Training crashed!")
     traceback.print_exc()
     sys.exit(1)

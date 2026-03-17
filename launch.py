@@ -45,7 +45,8 @@ def main():
         # Remove the import line from train.py
         train_code = re.sub(r'^from\s+prepare\s+import\s+.*$', '', train_code, flags=re.MULTILINE)
 
-        merged_code = prepare_code + "\n\n# " + "="*30 + "\n# BEGIN TRAIN.PY\n# " + "="*30 + "\n\n" + train_code
+        install_code = "import os\nos.system('pip install -q deepxde')\n\n"
+        merged_code = install_code + prepare_code + "\n\n# " + "="*30 + "\n# BEGIN TRAIN.PY\n# " + "="*30 + "\n\n" + train_code
 
         with open(os.path.join(submit_dir, "train.py"), "w", encoding="utf-8") as f:
             f.write(merged_code)
@@ -66,20 +67,20 @@ def main():
         "enable_gpu": "true",
         "enable_internet": "true",
         "dataset_sources": ["technolight/matlab-conditions"],
-        "competition_sources": [],
+        "competition_sources":[],
         "kernel_sources": [],
-        "model_sources": []
+        "model_sources":[]
     }
     
     with open(os.path.join(submit_dir, "kernel-metadata.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
         
     # ---------------------------------------------------------
-    # 3. Push to Kaggle with T4 and 21min timeout
+    # 3. Push to Kaggle with T4 and 40min timeout
     # ---------------------------------------------------------
-    print(f"[INFO] Pushing job to Kaggle ({run_id}) with T4 and 21min timeout...")
+    print(f"[INFO] Pushing job to Kaggle ({run_id}) with T4 and 40min timeout...")
     
-    code, out, err = run_cmd(f'kaggle kernels push -p {submit_dir} --accelerator NvidiaTeslaT4 --timeout 1260')
+    code, out, err = run_cmd(f'kaggle kernels push -p {submit_dir} --accelerator NvidiaTeslaT4 --timeout 2400')
     if code != 0:
         print(f"[ERROR] Kernel push failed. Code: {code}")
         print(f"STDOUT: {out.strip()}\nSTDERR: {err.strip()}")
@@ -134,7 +135,7 @@ def main():
     if code != 0:
         print(f"[WARN] Error downloading output: {err.strip() or out.strip()}")
     
-    log_files = [f for f in os.listdir(out_dir) if f.endswith(".log")]
+    log_files =[f for f in os.listdir(out_dir) if f.endswith(".log")]
     if log_files:
         log_path = os.path.join(out_dir, log_files[0])
         try:

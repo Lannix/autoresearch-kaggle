@@ -7,8 +7,8 @@ import torch
 import numpy as np
 from scipy.io import loadmat
 
-# Internal time budget limit
-TIME_BUDGET = 1140 
+# Internal time budget limit - 30 minutes
+TIME_BUDGET = 1800 
 
 # Path to the dataset on Kaggle
 DATA_PATH = "/kaggle/input/datasets/technolight/matlab-conditions/Field.mat"
