@@ -207,10 +207,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [KEEP] | *Delta:* [-5.042e-04 val_mse improvement]
   - *Notes:* Starting from the kept HYP-7.7 baseline, reduced Adam to 60% of the training budget and added an explicit helper that updates DeepXDE's cached PyTorch `iter_per_step` alongside the total L-BFGS budget. Kaggle T4 reached the best Adam checkpoint around step `11000`, then improved further during short L-BFGS bursts to `val_mse = 6.828914e-01`, beating `6.833956e-01` while keeping peak VRAM flat at `1470.6 MB` and shortening total training time to `1140.4s`.
 
-- [ ] **HYP-7.3: Self-Adaptive PINN (Learnable Loss Weights)**
+- [x] **HYP-7.3: Self-Adaptive PINN (Learnable Loss Weights)**
   - *Idea:* Make the loss weights trainable. Create `w_pde = dde.Variable(1.0)` and pass it to `model.compile(external_trainable_variables=[w_pde])`. Multiply the residual by this weight in the `pde` function to setup a min-max adversarial training dynamic.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+6.718e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the fixed PDE weighting with two trainable PyTorch logits registered as `external_trainable_variables`, then converted them through a softmax constrained to a fixed total weight of `6.0` and scaled the residual channels by the square roots of those adaptive weights so the effective MSE coefficients could move without trivially collapsing to zero. Kaggle T4 trained stably and reached very small PDE losses with essentially unchanged peak VRAM (`1981.8 MB`), but validation regressed from `5.666258e-02` to `6.338103e-02` because the optimizer drove the learned balance to a degenerate `u=6.0000, v=0.0000` split, over-focusing on one residual channel instead of improving field accuracy.
 
 - [x] **HYP-7.4: Causal Training (Exponential Time Weights)**
   - *Idea:* In the `pde` function, multiply the returned residual by $e^{-\epsilon t}$. This enforces physical causality by forcing the network to solve early time steps first.

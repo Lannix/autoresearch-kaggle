@@ -32,3 +32,4 @@ ee447a5	6.023192e-02	5.49	DISCARD	HYP-7.6 gradient-enhanced PINN loss
 48e221c	6.021131e-02	3.03	DISCARD	HYP-1.4 modified gated MLP
 1112dce	5.666258e-02	1.93	KEEP	HYP-6.9 beta-biased time sampling
 3b30526	5.746475e-02	2.04	DISCARD	HYP-1.8 random Fourier features
+3e78a50	6.338103e-02	1.94	DISCARD	HYP-7.3 self-adaptive PDE weights
