@@ -108,6 +108,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [KEEP] | *Delta:* [-1.766e-02 val_mse improvement]
   - *Notes:* Starting from the kept HYP-4.4 exact-Fourier hard-IC baseline, replaced the hard-periodic feature map with a custom network that internally normalizes both physical coordinates to `[-1, 1]`, keeps the exact Fourier hard initial-condition ansatz, and exposes the normalized inputs so the PDE residual can differentiate with respect to normalized coordinates before applying the exact `dt_n / dt` and `dtheta_n / dtheta` scaling factors. On Kaggle T4 this improved `val_mse` from `7.575254e-02` to `5.809172e-02`, slightly reduced peak VRAM to `1981.3 MB`, and lowered the parameter count to `66690`, so the cleaner normalized-coordinate representation generalized better than the earlier `(t_scaled, cos(theta), sin(theta))` feature transform on the hard-IC model.
 
+- [x] **HYP-4.7: Explicit Periodic Boundary Losses on the Normalized Hard-IC Model**
+  - *Idea:* Add strict periodic boundary losses at paired `theta_min` and `theta_max` points for random times, penalizing both value mismatches `(u, v)` and first-derivative mismatches `(u_theta, v_theta)`.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.311e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.6 baseline, added `6000` paired left/right boundary times and two explicit BC losses: one for `(u, v)` continuity and one for `(u_theta, v_theta)` continuity, with the derivative BC computed in normalized coordinates and rescaled by the exact `dtheta_n / dtheta` chain-rule factor to match the prior PyTorch formulation. The BC losses themselves converged to nearly zero, but Kaggle T4 still regressed from `5.809172e-02` to `5.940263e-02`, peak VRAM jumped sharply to `4333.1 MB`, and the heavier boundary-gradient bookkeeping cut the total optimizer progress down to `5064` steps, so the current hard-IC normalized model already appears periodic enough without the extra explicit PBC terms.
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
