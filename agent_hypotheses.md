@@ -192,6 +192,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [KEEP] | *Delta:* [-6.418e-04 val_mse improvement]
   - *Notes:* Replaced the fragile IC coordinate assembly with `np.column_stack`, removed redundant `num_initial` sampling, detached evaluation inputs when gradients are not needed, and switched the optimizer setup to a bounded L-BFGS configuration after Adam. On Kaggle T4 this improved `val_mse` from `6.840374e-01` to `6.833956e-01`, kept peak VRAM essentially flat at `1469.9 MB`, and reduced total training time to `1338.3s`.
 
+- [x] **HYP-7.8: NAdam Warmup with Gradient Clipping**
+  - *Idea:* Replace the Adam warmup with `NAdam`, use an exponential decay schedule, and clip gradients during the first-order stage before handing off to the existing time-bounded L-BFGS phase.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.411e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.4 exact-Fourier hard-IC baseline, swapped the Adam phase for a custom clipped `NAdam` optimizer with `lr=2e-3`, `gamma=0.99954`, and `max_grad_norm=1.0`, while leaving the hard-IC ansatz and L-BFGS schedule unchanged. Kaggle T4 trained stably, but the optimizer plateaued at a much worse PDE-only loss surface and final `val_mse` regressed from `7.575254e-02` to `8.986620e-02`, so the benchmark-style first-order schedule did not transfer cleanly to the DeepXDE setup.
+
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
 - [x] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
