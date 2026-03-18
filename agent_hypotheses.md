@@ -41,8 +41,8 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
 
 - [ ] **HYP-1.5: Polar Coordinate Representation / Phase-Amplitude**
   - *Idea:* Let the network output Amplitude $A$ and Phase $\phi$ instead of $u$ and $v$. Inside the `pde(x, y)` function, reconstruct $u = A \cos(\phi)$ and $v = A \sin(\phi)$ *before* computing derivatives.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.178e-01 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, reinterpreted the core network's two outputs as a polar residual `(A, phi)`, converted that residual to Cartesian form via `(A cos(phi), A sin(phi))`, and only then applied the exact Fourier hard-IC output gate. The Kaggle T4 run stayed numerically stable, used essentially the same VRAM (`1986.3 MB`), and drove the PDE loss down smoothly through Adam and L-BFGS, but final `val_mse` still regressed badly from `5.809172e-02` to `1.759055e-01`, suggesting that the residual polar parameterization made the PDE-only objective easier to satisfy locally while hurting field-level generalization on the isolated validation grid.
 
 - [x] **HYP-1.6: Smooth Non-Saturating Activations (SiLU / GELU)**
   - *Idea:* Replace the `tanh` hidden activations in the kept normalized hard-IC model with a smoother non-saturating activation such as `silu` or `gelu` to reduce vanishing gradients while keeping second derivatives stable.

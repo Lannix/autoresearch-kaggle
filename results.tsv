@@ -25,3 +25,4 @@ d97a2e7	7.575254e-02	1.95	KEEP	HYP-4.4 exact Fourier hard initial-condition ansa
 ae19573	5.940263e-02	4.23	DISCARD	HYP-4.7 explicit periodic boundary losses
 b3059f3	6.150582e-02	3.25	DISCARD	HYP-1.6 SiLU activation on normalized hard-IC model
 5eff0f0	5.967371e-02	2.44	DISCARD	HYP-1.7 GELU activation on normalized hard-IC model
+361b289	1.759055e-01	1.94	DISCARD	HYP-1.5 polar residual formulation
