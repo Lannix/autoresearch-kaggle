@@ -94,7 +94,7 @@ data = dde.data.TimePDE(
 # ==========================================
 # 5. Neural Network Architecture
 # ==========================================
-net = dde.nn.FNN([3] + [128] * 5 + [2], "sin", "Glorot uniform")
+net = dde.nn.FNN([3] + [128] * 5 + [2], "tanh", "Glorot uniform")
 
 def feature_transform(x):
     theta = x[:, 0:1]
