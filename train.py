@@ -192,10 +192,31 @@ def pde(x, y):
     intensity = u.square() + v.square()
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
+    grad_res_u_norm = torch.autograd.grad(
+        res_u,
+        x_norm,
+        grad_outputs=torch.ones_like(res_u),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
+    grad_res_v_norm = torch.autograd.grad(
+        res_v,
+        x_norm,
+        grad_outputs=torch.ones_like(res_v),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
+    dres_u_dth = grad_res_u_norm[:, 0:1] * theta_norm_scale
+    dres_v_dth = grad_res_v_norm[:, 0:1] * theta_norm_scale
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [
+        causal_weight * res_u,
+        causal_weight * res_v,
+        0.1 * dres_u_dth,
+        0.1 * dres_v_dth,
+    ]
 
 
 data = dde.data.TimePDE(
@@ -251,8 +272,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+# Loss weights order corresponds to PDE residuals and their theta-derivative penalties.
+loss_weights =[3.0, 3.0, 0.5, 0.5]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
