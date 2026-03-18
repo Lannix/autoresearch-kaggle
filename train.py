@@ -111,7 +111,7 @@ def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "gelu", "Glorot uniform")
+        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
         self.regularizer = self.core.regularizer
         self.last_x_norm = None
 
