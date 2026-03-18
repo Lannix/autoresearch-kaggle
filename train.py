@@ -107,7 +107,11 @@ data = dde.data.TimePDE(
 # ==========================================
 # 5. Neural Network Architecture
 # ==========================================
-net = dde.nn.FNN([3] + [128] * 5 + [2], "tanh", "Glorot uniform")
+TIME_HARMONICS = 25
+THETA_HARMONICS = 5
+INPUT_DIM = 1 + 2 * TIME_HARMONICS + 2 * THETA_HARMONICS
+
+net = dde.nn.FNN([INPUT_DIM] + [128] * 5 + [2], "tanh", "Glorot uniform")
 
 def feature_transform(x):
     theta = x[:, 0:1]
@@ -115,7 +119,14 @@ def feature_transform(x):
     t_center = torch.tensor((t_min + t_max) * 0.5, device=x.device, dtype=x.dtype)
     t_scale = torch.tensor((t_max - t_min) * 0.5 + 1e-12, device=x.device, dtype=x.dtype)
     time_scaled = (time_coord - t_center) / t_scale
-    return torch.cat((time_scaled, torch.cos(theta), torch.sin(theta)), dim=1)
+    features = [time_scaled]
+    for k in range(1, TIME_HARMONICS + 1):
+        time_angle = k * math.pi * time_scaled
+        features.extend((torch.sin(time_angle), torch.cos(time_angle)))
+    for k in range(1, THETA_HARMONICS + 1):
+        theta_angle = k * theta
+        features.extend((torch.cos(theta_angle), torch.sin(theta_angle)))
+    return torch.cat(features, dim=1)
 
 ic_fourier_cache = {}
 
@@ -166,6 +177,7 @@ lbfgs_total_iters = 5000
 lbfgs_inner_iters = 250
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
+print(f"[INFO] Harmonics: time={TIME_HARMONICS}, theta={THETA_HARMONICS}, input_dim={INPUT_DIM}")
 
 class TimeBasedEarlyStopping(dde.callbacks.Callback):
     def __init__(self, max_duration):
