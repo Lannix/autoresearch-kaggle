@@ -179,6 +179,11 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [KEEP] | *Delta:* [-8.821e-05 val_mse improvement]
   - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, disabled `num_domain` sampling and supplied `30000` static anchors directly: `24000` Gaussian-biased `theta` samples plus `6000` uniform-background `theta` samples, all paired with shuffled uniform time samples. On Kaggle T4 the initial-condition peak landed at `theta = 0`, the static sampler used `sigma = 1.8813`, peak VRAM stayed flat at `1981.3 MB`, and L-BFGS refined cleanly out to `11228` total steps; the final `val_mse` improved slightly from `5.809172e-02` to `5.800351e-02`, so this cheap static bias outperformed the earlier dynamic adaptive samplers without adding runtime overhead.
 
+- [x] **HYP-6.9: Beta-Biased Time Sampling on Static Collocation**
+  - *Idea:* Keep the Gaussian-biased static `theta` anchors from HYP-6.8, but replace uniform time coverage with a fixed beta-distributed sampler that concentrates more collocation points near the early transient phase.
+  - *Outcome:* [KEEP] | *Delta:* [-1.341e-03 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-6.8 baseline, kept the `24000` Gaussian + `6000` uniform `theta` anchor mix centered on the initial-condition peak and changed only the time coordinates: instead of shuffled uniform `linspace` values, sampled `t` from `Beta(1.0, 3.0)` mapped onto `[t_min, t_max]` so the static anchor set emphasized the chaotic startup regime near `t = 0`. On Kaggle T4 this preserved the same `1981.3 MB` peak VRAM and nearly the same wall-clock budget, but L-BFGS refined to a stronger final solution and improved `val_mse` from `5.800351e-02` to `5.666258e-02`, making this a cheap win over both uniform-time static sampling and the earlier dynamic adaptive methods.
+
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
   - *Outcome:* [DISCARD] | *Delta:* [+2.465e-03 val_mse regression]
