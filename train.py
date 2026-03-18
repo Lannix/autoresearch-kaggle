@@ -8,6 +8,7 @@ os.environ["DDE_BACKEND"] = "pytorch"
 import time
 import traceback
 import sys
+import math
 import numpy as np
 import torch
 import deepxde as dde
@@ -40,6 +41,30 @@ th0_arr = ic["th0_arr"]
 u0 = ic["u0"]
 v0 = ic["v0"]
 
+theta_samples = np.asarray(th0_arr, dtype=np.float64).reshape(-1)
+u0_samples = np.asarray(u0, dtype=np.float64).reshape(-1)
+v0_samples = np.asarray(v0, dtype=np.float64).reshape(-1)
+theta_step = float(np.median(np.diff(theta_samples)))
+theta_period = float(theta_step * theta_samples.size)
+theta_origin = float(theta_samples[0])
+
+
+def build_real_fourier_coeffs(values):
+    coeffs = np.fft.rfft(values) / values.size
+    cos_coeffs = 2.0 * coeffs.real
+    sin_coeffs = -2.0 * coeffs.imag
+    cos_coeffs[0] = coeffs[0].real
+    sin_coeffs[0] = 0.0
+    if values.size % 2 == 0:
+        cos_coeffs[-1] = coeffs[-1].real
+        sin_coeffs[-1] = 0.0
+    return cos_coeffs.astype(np.float32), sin_coeffs.astype(np.float32)
+
+
+u0_cos_coeffs, u0_sin_coeffs = build_real_fourier_coeffs(u0_samples)
+v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
+fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
+
 # ==========================================
 # 2. DeepXDE Geometry and Domain
 # ==========================================
@@ -70,22 +95,10 @@ def pde(x, y):
 
     return [causal_weight * res_u, causal_weight * res_v]
 
-# ==========================================
-# 4. Initial Conditions
-# ==========================================
-# Build a stable (N, 2) coordinate matrix even if the IC arrays become 1D.
-ic_points = np.column_stack(
-    (
-        np.asarray(th0_arr).reshape(-1),
-        np.full(th0_arr.shape[0], t0, dtype=th0_arr.dtype),
-    )
-)
-ic_u = dde.icbc.PointSetBC(ic_points, u0, component=0)
-ic_v = dde.icbc.PointSetBC(ic_points, v0, component=1)
-
 data = dde.data.TimePDE(
     geomtime,
-    pde, [ic_u, ic_v],
+    pde,
+    [],
     num_domain=30000,
     num_boundary=0,
     num_initial=0,
@@ -104,7 +117,43 @@ def feature_transform(x):
     time_scaled = (time_coord - t_center) / t_scale
     return torch.cat((time_scaled, torch.cos(theta), torch.sin(theta)), dim=1)
 
+ic_fourier_cache = {}
+
+
+def get_ic_fourier_tensors(device, dtype):
+    key = (device.type, device.index, str(dtype))
+    if key not in ic_fourier_cache:
+        ic_fourier_cache[key] = {
+            "modes": torch.as_tensor(fourier_modes, device=device, dtype=dtype).view(1, -1),
+            "u_cos": torch.as_tensor(u0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "u_sin": torch.as_tensor(u0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "v_cos": torch.as_tensor(v0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "v_sin": torch.as_tensor(v0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "theta_origin": torch.tensor(theta_origin, device=device, dtype=dtype),
+            "theta_period": torch.tensor(theta_period, device=device, dtype=dtype),
+            "two_pi": torch.tensor(2.0 * math.pi, device=device, dtype=dtype),
+            "t0": torch.tensor(t0, device=device, dtype=dtype),
+        }
+    return ic_fourier_cache[key]
+
+
+def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
+    theta_rel = theta - coeffs["theta_origin"]
+    angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
+    return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
+
+
+def output_transform(x, y):
+    theta = x[:, 0:1]
+    time_coord = x[:, 1:2]
+    coeffs = get_ic_fourier_tensors(x.device, x.dtype)
+    u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
+    v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
+    growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
+    return torch.cat((u_exact, v_exact), dim=1) + growth * y
+
 net.apply_feature_transform(feature_transform)
+net.apply_output_transform(output_transform)
 model = dde.Model(data, net)
 
 # ==========================================
@@ -150,9 +199,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to data array:
-#[pde_u, pde_v, ic_u, ic_v]
-loss_weights =[3.0, 3.0, 50.0, 50.0]
+# Loss weights order corresponds to the PDE residual outputs.
+loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
