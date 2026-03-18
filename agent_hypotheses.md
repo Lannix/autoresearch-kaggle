@@ -54,6 +54,11 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+1.582e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, swapped the core `dde.nn.FNN` activation from `tanh` to `gelu` while leaving the exact Fourier hard-IC ansatz, normalized-coordinate PDE residual, and optimizer schedule unchanged. Kaggle T4 stayed stable and let L-BFGS run much longer than the SiLU variant, but final `val_mse` still regressed from `5.809172e-02` to `5.967371e-02`, peak VRAM increased to `2494.0 MB`, and the smoother activation still failed to beat the original `tanh` baseline, so `gelu` is better than `silu` here but not a new best.
 
+- [ ] **HYP-1.8: Random Fourier Features Before the Normalized MLP**
+  - *Idea:* Keep the normalized hard-IC architecture, but replace the raw 2D normalized input to the `tanh` MLP with a fixed non-trainable random Fourier feature encoding `[\cos(Bx), \sin(Bx)]` so the network can represent higher-frequency structure without relying on the first layer to synthesize sinusoidal bases from scratch.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
 
