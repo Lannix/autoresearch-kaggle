@@ -156,11 +156,45 @@ def build_gaussian_biased_collocation_points(num_points):
     return collocation_points
 
 
+class ModifiedGatedMLP(torch.nn.Module):
+    def __init__(self, input_dim, hidden_width, num_hidden_layers, output_dim):
+        super().__init__()
+        self.input_layer = torch.nn.Linear(input_dim, hidden_width)
+        self.u_layer = torch.nn.Linear(input_dim, hidden_width)
+        self.v_layer = torch.nn.Linear(input_dim, hidden_width)
+        self.gate_layers = torch.nn.ModuleList(
+            [torch.nn.Linear(hidden_width, hidden_width) for _ in range(num_hidden_layers - 1)]
+        )
+        self.output_layer = torch.nn.Linear(hidden_width, output_dim)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        layers = [
+            self.input_layer,
+            self.u_layer,
+            self.v_layer,
+            *self.gate_layers,
+            self.output_layer,
+        ]
+        for layer in layers:
+            torch.nn.init.xavier_uniform_(layer.weight)
+            torch.nn.init.zeros_(layer.bias)
+
+    def forward(self, inputs):
+        u = torch.tanh(self.u_layer(inputs))
+        v = torch.tanh(self.v_layer(inputs))
+        h = torch.tanh(self.input_layer(inputs))
+        for layer in self.gate_layers:
+            z = torch.tanh(layer(h))
+            h = (1.0 - z) * u + z * v
+        return self.output_layer(h)
+
+
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
-        self.regularizer = self.core.regularizer
+        self.core = ModifiedGatedMLP(2, 128, 5, 2)
+        self.regularizer = None
         self.last_x_norm = None
 
     def normalize_inputs(self, x):
