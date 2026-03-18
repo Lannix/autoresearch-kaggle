@@ -207,10 +207,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-7.6: Gradient-Enhanced Loss (gPINN)**
+- [x] **HYP-7.6: Gradient-Enhanced Loss (gPINN)**
   - *Idea:* Compute the spatial derivative of the residual using `dde.grad.jacobian(res, x, j=1)` and return it as an extra element in the PDE return list to guide the optimizer in sharp gradient regions.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.140e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, added Sobolev-style gradient supervision by differentiating both PDE residual channels with respect to `theta` inside `pde(x, y)`, returning `[causal_weight * res_u, causal_weight * res_v, 0.1 * dres_u/dtheta, 0.1 * dres_v/dtheta]` with loss weights `[3.0, 3.0, 0.5, 0.5]`. Kaggle T4 stayed stable and drove the extra residual-gradient losses down smoothly, but the heavier higher-order autograd cut total progress to `3864` steps, peak VRAM ballooned to `5617.5 MB`, and final `val_mse` regressed from `5.809172e-02` to `6.023192e-02`, so this gPINN regularization was too expensive for the current 30-minute T4 budget.
 
 - [x] **HYP-7.7: Callback-Safe L-BFGS and Lean IC Bookkeeping**
   - *Idea:* Limit PyTorch L-BFGS internal `maxiter` so DeepXDE callbacks can enforce time limits, run many outer L-BFGS iterations explicitly, and remove redundant randomly generated initial points so only the `PointSetBC` IC data is used.
