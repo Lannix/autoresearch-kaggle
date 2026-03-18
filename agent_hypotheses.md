@@ -34,10 +34,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-1.4: Modified MLP (Wang et al. 2021)**
+- [x] **HYP-1.4: Modified MLP (Wang et al. 2021)**
   - *Idea:* Build a custom PyTorch module with temporal/spatial gating mechanisms and pass it to DeepXDE. Greatly improves gradient flow.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.208e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.8 Gaussian-biased static-collocation baseline, replaced the inner `dde.nn.FNN` with a Wang-style modified MLP that learns two global projections `U` and `V` from normalized inputs and blends them through tanh gate layers of the form `H = (1 - Z) * U + Z * V`. The Kaggle T4 run stayed stable and L-BFGS still refined the model, but final `val_mse` regressed from `5.800351e-02` to `6.021131e-02`, peak VRAM rose to `3098.0 MB`, and the total parameter count increased to `67458`, so this gating architecture did not improve the current hard-IC static-sampling setup within the 30-minute budget.
 
 - [x] **HYP-1.5: Polar Coordinate Representation / Phase-Amplitude**
   - *Idea:* Let the network output Amplitude $A$ and Phase $\phi$ instead of $u$ and $v$. Inside the `pde(x, y)` function, reconstruct $u = A \cos(\phi)$ and $v = A \sin(\phi)$ *before* computing derivatives.
