@@ -127,14 +127,22 @@ class NormalizedChainRuleNet(dde.nn.NN):
         time_coord = x_norm[:, 1:2] / time_norm_scale + time_center
         return theta, time_coord
 
+    def polar_residual_to_cartesian(self, raw):
+        residual_amp = raw[:, 0:1]
+        residual_phase = raw[:, 1:2]
+        u_residual = residual_amp * torch.cos(residual_phase)
+        v_residual = residual_amp * torch.sin(residual_phase)
+        return torch.cat((u_residual, v_residual), dim=1)
+
     def forward_from_normalized(self, x_norm):
         raw = self.core(x_norm)
+        residual_uv = self.polar_residual_to_cartesian(raw)
         theta, time_coord = self.denormalize_inputs(x_norm)
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
+        return torch.cat((u_exact, v_exact), dim=1) + growth * residual_uv
 
     def forward(self, inputs):
         self.last_x_norm = self.normalize_inputs(inputs)
