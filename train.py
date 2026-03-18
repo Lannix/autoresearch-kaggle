@@ -178,24 +178,6 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
             self.model.stop_training = True
 
 
-class ClippedNAdam(torch.optim.NAdam):
-    def __init__(self, params, max_grad_norm=1.0, **kwargs):
-        super().__init__(params, **kwargs)
-        self.max_grad_norm = max_grad_norm
-
-    def step(self, closure=None):
-        if self.max_grad_norm is not None:
-            params = [
-                param
-                for group in self.param_groups
-                for param in group["params"]
-                if param.grad is not None
-            ]
-            if params:
-                torch.nn.utils.clip_grad_norm_(params, self.max_grad_norm)
-        return super().step(closure)
-
-
 def configure_pytorch_lbfgs(total_iters, inner_iters):
     # DeepXDE caches PyTorch's per-step L-BFGS budget separately from maxiter.
     dde.optimizers.config.set_LBFGS_options(maxiter=total_iters)
@@ -219,12 +201,7 @@ def model_uv(t_in, th_in, need_x=False):
 
 # Loss weights order corresponds to the PDE residual outputs.
 loss_weights =[3.0, 3.0]
-adam_optimizer = ClippedNAdam(net.parameters(), lr=2e-3, max_grad_norm=1.0)
-model.compile(
-    adam_optimizer,
-    decay=("exponential", 0.99954),
-    loss_weights=loss_weights,
-)
+model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
