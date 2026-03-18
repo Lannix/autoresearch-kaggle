@@ -19,10 +19,10 @@ After the Kaggle run finishes, update this file:
 ## Category 1: Network Architectures (Basics, ResNet, MsFFN)
 Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
 
-- [ ] **HYP-1.1: SIREN (Sine Activations)**
+- [x] **HYP-1.1: SIREN (Sine Activations)**
   - *Idea:* Change the `activation` string in `dde.nn.FNN` to `"sin"` and set `initializer="Glorot uniform"`. Sine activations are proven to better capture high-frequency components of breathers.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+4.874e-01 val_mse regression]
+  - *Notes:* Replaced the kept baseline's `tanh` hidden activations with `sin` while leaving the hard-periodic input transform, causal PDE weighting, and tuned Adam plus L-BFGS schedule unchanged. The Kaggle T4 run stayed numerically stable, but validation collapsed from `6.828914e-01` to `1.170289e+00`, peak VRAM increased to `1790.4 MB`, and the optimizer never recovered from the noisier oscillatory representation, so this simple sine-activation swap is a poor fit for the current DeepXDE setup.
 
 - [ ] **HYP-1.2: Multi-scale Fourier Feature Network (MsFFN)**
   - *Idea:* Replace `dde.nn.FNN` with `dde.nn.MsFFN(layer_sizes, activation, initializer, sigmas=[1, 10])`. This maps inputs to a Fourier space natively in DeepXDE, heavily reducing spectral bias.
