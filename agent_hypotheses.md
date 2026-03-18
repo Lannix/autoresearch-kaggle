@@ -129,10 +129,15 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+1.201e-02 val_mse regression]
   - *Notes:* Implemented an R3-style callback during Adam that evaluated the causal PDE residual on the current `30000` PDE points every `1000` steps, retained only points with residual above the current mean, and refilled the rest with fresh interior samples so the collocation budget stayed fixed. The retain rate stabilized around `19%` to `31%`, but Kaggle T4 regressed from `6.828914e-01` to `6.949009e-01` and peak VRAM rose to `2590.8 MB`, so aggressively releasing low-residual points disrupted the stronger baseline distribution more than it helped.
 
-- [ ] **HYP-6.5: Residual-Based Adaptive Distribution (RAD)**
+- [x] **HYP-6.5: Residual-Based Adaptive Distribution (RAD)**
   - *Idea:* Periodically replace the PDE collocation set with a new set sampled from a residual-weighted PDF `p(x) ∝ ε(x)^k / E[ε(x)^k] + c`, using the paper's default `k = 1`, `c = 1`.
   - *Outcome:* [DISCARD] | *Delta:* [+3.584e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-7.2 baseline, added a RAD callback that every `2000` Adam steps scored `60000` fresh candidate points by the causal PDE residual, built the paper-style residual PDF with `k = 1`, `c = 1`, and replaced the `30000` PDE collocation points with a weighted sample from that pool. The sampled sets consistently had higher average residual than the candidate pools, so the biasing worked mechanically, but Kaggle T4 still regressed from `6.828914e-01` to `6.864758e-01` and peak VRAM jumped to `3813.2 MB`, so this residual-weighted redistribution was not worth the extra second-derivative overhead in the current setup.
+
+- [x] **HYP-6.6: RAR-D (Residual-Based Adaptive Refinement with Distribution Sampling)**
+  - *Idea:* Periodically score a fresh candidate pool with the PDE residual, sample a small batch of new anchors from the paper's residual-weighted PDF, and append them to the existing collocation set rather than replacing points outright.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.125e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-7.2 baseline, added a callback that every `2000` Adam steps scored `20000` fresh candidate points, sampled `512` new anchors from a RAD-style PDF with `k = 1`, `c = 1`, and appended them to the PDE set until `2048` extra anchors were added. The weighted sampling strongly favored higher-residual candidates, but the enlarged PDE set still regressed from `6.828914e-01` to `6.941374e-01`, raised peak VRAM to `2196.2 MB`, and slowed the L-BFGS phase, so this incremental RAR-D variant did not improve generalization on the current budget.
 
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
