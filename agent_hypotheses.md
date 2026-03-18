@@ -131,8 +131,8 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
 
 - [ ] **HYP-6.5: Residual-Based Adaptive Distribution (RAD)**
   - *Idea:* Periodically replace the PDE collocation set with a new set sampled from a residual-weighted PDF `p(x) ∝ ε(x)^k / E[ε(x)^k] + c`, using the paper's default `k = 1`, `c = 1`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.584e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-7.2 baseline, added a RAD callback that every `2000` Adam steps scored `60000` fresh candidate points by the causal PDE residual, built the paper-style residual PDF with `k = 1`, `c = 1`, and replaced the `30000` PDE collocation points with a weighted sample from that pool. The sampled sets consistently had higher average residual than the candidate pools, so the biasing worked mechanically, but Kaggle T4 still regressed from `6.828914e-01` to `6.864758e-01` and peak VRAM jumped to `3813.2 MB`, so this residual-weighted redistribution was not worth the extra second-derivative overhead in the current setup.
 
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
