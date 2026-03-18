@@ -54,10 +54,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+1.582e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, swapped the core `dde.nn.FNN` activation from `tanh` to `gelu` while leaving the exact Fourier hard-IC ansatz, normalized-coordinate PDE residual, and optimizer schedule unchanged. Kaggle T4 stayed stable and let L-BFGS run much longer than the SiLU variant, but final `val_mse` still regressed from `5.809172e-02` to `5.967371e-02`, peak VRAM increased to `2494.0 MB`, and the smoother activation still failed to beat the original `tanh` baseline, so `gelu` is better than `silu` here but not a new best.
 
-- [ ] **HYP-1.8: Random Fourier Features Before the Normalized MLP**
+- [x] **HYP-1.8: Random Fourier Features Before the Normalized MLP**
   - *Idea:* Keep the normalized hard-IC architecture, but replace the raw 2D normalized input to the `tanh` MLP with a fixed non-trainable random Fourier feature encoding `[\cos(Bx), \sin(Bx)]` so the network can represent higher-frequency structure without relying on the first layer to synthesize sinusoidal bases from scratch.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+8.022e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, inserted a fixed random Fourier encoding with `32` frequencies and Gaussian scale `sigma = 4.0` ahead of the existing five-layer `tanh` core, expanding the first learned layer from `2` inputs to `64` encoded features while leaving the exact Fourier hard-IC ansatz, normalized chain-rule PDE residual, and optimizer schedule unchanged. Kaggle T4 trained stably and L-BFGS still refined the model down to `10373` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.746475e-02`, peak VRAM rose to `2093.5 MB`, and parameter count increased to `74626`, so this fixed RFF front-end added capacity without beating the simpler normalized-coordinate baseline.
 
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
