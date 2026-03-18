@@ -23,3 +23,4 @@ d97a2e7	7.575254e-02	1.95	KEEP	HYP-4.4 exact Fourier hard initial-condition ansa
 403b218	8.628124e-02	1.95	DISCARD	HYP-6.7 hybrid residual-based adaptive refinement
 68ce0b5	5.809172e-02	1.93	KEEP	HYP-4.6 domain normalization with exact chain-rule scaling
 ae19573	5.940263e-02	4.23	DISCARD	HYP-4.7 explicit periodic boundary losses
+b3059f3	6.150582e-02	3.25	DISCARD	HYP-1.6 SiLU activation on normalized hard-IC model
