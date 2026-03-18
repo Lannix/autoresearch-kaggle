@@ -81,6 +81,8 @@ time_norm_scale = float(1.0 / time_half_span)
 num_domain_points = 30000
 gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
+time_bias_beta_a = 1.0
+time_bias_beta_b = 3.0
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -137,21 +139,22 @@ def build_gaussian_biased_collocation_points(num_points):
     theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
     np.random.shuffle(theta_samples_biased)
 
-    time_samples_uniform = np.linspace(
-        t_min,
-        t_max,
-        num=num_points,
-        endpoint=False,
-        dtype=np.float32,
-    ).reshape(-1, 1)
-    time_samples_uniform += np.float32(0.5 * (t_max - t_min) / num_points)
-    np.random.shuffle(time_samples_uniform)
+    time_samples_biased = np.random.beta(
+        time_bias_beta_a,
+        time_bias_beta_b,
+        size=(num_points, 1),
+    ).astype(np.float32)
+    time_samples_biased = (
+        t_min + (t_max - t_min) * time_samples_biased
+    ).astype(np.float32)
+    np.random.shuffle(time_samples_biased)
 
-    collocation_points = np.hstack((theta_samples_biased, time_samples_uniform)).astype(np.float32)
+    collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
         "[INFO] Static Gaussian-biased collocation: "
         f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
-        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}"
+        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
+        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
     )
     return collocation_points
 
