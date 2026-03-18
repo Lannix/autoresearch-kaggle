@@ -72,51 +72,16 @@ geom = dde.geometry.Interval(th_min, th_max)
 timedomain = dde.geometry.TimeDomain(t_min, t_max)
 geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
-# ==========================================
-# 3. Physics / LLE Residual
-# ==========================================
-def pde(x, y):
-    # x is [theta, t]
-    # y is [u, v]
-    u, v = y[:, 0:1], y[:, 1:2]
-    
-    du_dt = dde.grad.jacobian(y, x, i=0, j=1)
-    dv_dt = dde.grad.jacobian(y, x, i=1, j=1)
-    
-    du_dth2 = dde.grad.hessian(y, x, component=0, i=0, j=0)
-    dv_dth2 = dde.grad.hessian(y, x, component=1, i=0, j=0)
-    
-    S = u**2 + v**2
-    
-    res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - S * v + f)
-    res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + S * u)
-    time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
-    causal_weight = torch.exp(-2.0 * time_frac)
-
-    return [causal_weight * res_u, causal_weight * res_v]
-
-data = dde.data.TimePDE(
-    geomtime,
-    pde,
-    [],
-    num_domain=30000,
-    num_boundary=0,
-    num_initial=0,
-)
+theta_center = float((th_min + th_max) * 0.5)
+theta_half_span = float((th_max - th_min) * 0.5 + 1e-12)
+time_center = float((t_min + t_max) * 0.5)
+time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
+theta_norm_scale = float(1.0 / theta_half_span)
+time_norm_scale = float(1.0 / time_half_span)
 
 # ==========================================
-# 5. Neural Network Architecture
+# 3. Neural Network Architecture
 # ==========================================
-net = dde.nn.FNN([3] + [128] * 5 + [2], "tanh", "Glorot uniform")
-
-def feature_transform(x):
-    theta = x[:, 0:1]
-    time_coord = x[:, 1:2]
-    t_center = torch.tensor((t_min + t_max) * 0.5, device=x.device, dtype=x.dtype)
-    t_scale = torch.tensor((t_max - t_min) * 0.5 + 1e-12, device=x.device, dtype=x.dtype)
-    time_scaled = (time_coord - t_center) / t_scale
-    return torch.cat((time_scaled, torch.cos(theta), torch.sin(theta)), dim=1)
-
 ic_fourier_cache = {}
 
 
@@ -143,17 +108,104 @@ def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
 
 
-def output_transform(x, y):
-    theta = x[:, 0:1]
-    time_coord = x[:, 1:2]
-    coeffs = get_ic_fourier_tensors(x.device, x.dtype)
-    u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
-    v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
-    growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-    return torch.cat((u_exact, v_exact), dim=1) + growth * y
+class NormalizedChainRuleNet(dde.nn.NN):
+    def __init__(self):
+        super().__init__()
+        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
+        self.regularizer = self.core.regularizer
+        self.last_x_norm = None
 
-net.apply_feature_transform(feature_transform)
-net.apply_output_transform(output_transform)
+    def normalize_inputs(self, x):
+        theta = x[:, 0:1]
+        time_coord = x[:, 1:2]
+        theta_norm = (theta - theta_center) * theta_norm_scale
+        time_norm = (time_coord - time_center) * time_norm_scale
+        return torch.cat((theta_norm, time_norm), dim=1)
+
+    def denormalize_inputs(self, x_norm):
+        theta = x_norm[:, 0:1] / theta_norm_scale + theta_center
+        time_coord = x_norm[:, 1:2] / time_norm_scale + time_center
+        return theta, time_coord
+
+    def forward_from_normalized(self, x_norm):
+        raw = self.core(x_norm)
+        theta, time_coord = self.denormalize_inputs(x_norm)
+        coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
+        u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
+        v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
+        growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
+        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
+
+    def forward(self, inputs):
+        self.last_x_norm = self.normalize_inputs(inputs)
+        return self.forward_from_normalized(self.last_x_norm)
+
+
+net = NormalizedChainRuleNet()
+
+# ==========================================
+# 4. Physics / LLE Residual
+# ==========================================
+def pde(x, y):
+    x_norm = net.last_x_norm
+    if x_norm is None or x_norm.shape[0] != x.shape[0]:
+        x_norm = net.normalize_inputs(x)
+        y = net.forward_from_normalized(x_norm)
+
+    u, v = y[:, 0:1], y[:, 1:2]
+
+    grad_u_norm = torch.autograd.grad(
+        u,
+        x_norm,
+        grad_outputs=torch.ones_like(u),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
+    grad_v_norm = torch.autograd.grad(
+        v,
+        x_norm,
+        grad_outputs=torch.ones_like(v),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
+
+    du_dth2_norm = torch.autograd.grad(
+        grad_u_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_u_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+    dv_dth2_norm = torch.autograd.grad(
+        grad_v_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_v_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+
+    du_dt = grad_u_norm[:, 1:2] * time_norm_scale
+    dv_dt = grad_v_norm[:, 1:2] * time_norm_scale
+    du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
+    dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
+
+    intensity = u.square() + v.square()
+    res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
+    res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
+    time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
+    causal_weight = torch.exp(-2.0 * time_frac)
+
+    return [causal_weight * res_u, causal_weight * res_v]
+
+
+data = dde.data.TimePDE(
+    geomtime,
+    pde,
+    [],
+    num_domain=30000,
+    num_boundary=0,
+    num_initial=0,
+)
 model = dde.Model(data, net)
 
 # ==========================================
