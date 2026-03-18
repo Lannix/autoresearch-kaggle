@@ -115,6 +115,11 @@ max_train_time = TIME_BUDGET - EVAL_RESERVE
 adam_time_limit = max_train_time * 0.60
 lbfgs_total_iters = 5000
 lbfgs_inner_iters = 250
+rar_theta_points = 96
+rar_time_points = 96
+rar_num_anchors = 1536
+rar_batch_size = 1024
+rar_min_remaining_time = 180
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
@@ -140,6 +145,45 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
         lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
     )
 
+
+def add_rar_anchors():
+    elapsed = time.time() - t_start_training
+    remaining = max_train_time - elapsed
+    if remaining < rar_min_remaining_time:
+        print(
+            f"[INFO] Skipping RAR because only {remaining:.1f}s remain before the training cutoff."
+        )
+        return 0
+
+    theta_grid = np.linspace(th_min, th_max, rar_theta_points, dtype=np.float32)
+    time_grid = np.linspace(t_min, t_max, rar_time_points, dtype=np.float32)
+    th_mesh, t_mesh = np.meshgrid(theta_grid, time_grid, indexing="xy")
+    candidate_points = np.column_stack((th_mesh.reshape(-1), t_mesh.reshape(-1)))
+
+    residual_scores = []
+    for start in range(0, candidate_points.shape[0], rar_batch_size):
+        stop = start + rar_batch_size
+        x_batch = torch.tensor(
+            candidate_points[start:stop],
+            device=device,
+            dtype=torch.float32,
+        ).requires_grad_(True)
+        residual_terms = pde(x_batch, net(x_batch))
+        score = torch.zeros(x_batch.shape[0], device=device, dtype=torch.float32)
+        for term in residual_terms:
+            score = score + term[:, 0] ** 2
+        residual_scores.append(score.detach().cpu().numpy())
+
+    residual_scores = np.concatenate(residual_scores, axis=0)
+    top_k = min(rar_num_anchors, candidate_points.shape[0])
+    anchor_indices = np.argpartition(residual_scores, -top_k)[-top_k:]
+    anchors = candidate_points[anchor_indices].astype(np.float32)
+    data.add_anchors(anchors)
+    print(
+        f"[INFO] RAR added {anchors.shape[0]} anchors from {candidate_points.shape[0]} candidates."
+    )
+    return anchors.shape[0]
+
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
     x = torch.cat((th_in, t_in), dim=1)
@@ -160,7 +204,11 @@ time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 try:
     print("\n[INFO] Phase 1: Adam optimization")
     losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
-    
+
+    added_anchors = add_rar_anchors()
+    if added_anchors > 0:
+        print(f"[INFO] Proceeding to L-BFGS with {data.train_x_all.shape[0]} PDE points after RAR.")
+
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
