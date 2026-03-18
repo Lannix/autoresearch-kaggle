@@ -238,8 +238,27 @@ def periodic_value_error(inputs, outputs, beg, mid, end):
 
 
 def periodic_derivative_error(inputs, outputs, beg, mid, end):
-    du_dtheta = dde.grad.jacobian(outputs, inputs, i=0, j=0)
-    dv_dtheta = dde.grad.jacobian(outputs, inputs, i=1, j=0)
+    x_norm = net.last_x_norm
+    if x_norm is None or x_norm.shape[0] != inputs.shape[0]:
+        x_norm = net.normalize_inputs(inputs)
+        outputs = net.forward_from_normalized(x_norm)
+
+    du_dtheta_norm = torch.autograd.grad(
+        outputs[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(outputs[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+    dv_dtheta_norm = torch.autograd.grad(
+        outputs[:, 1:2],
+        x_norm,
+        grad_outputs=torch.ones_like(outputs[:, 1:2]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+    du_dtheta = du_dtheta_norm * theta_norm_scale
+    dv_dtheta = dv_dtheta_norm * theta_norm_scale
     left = torch.cat((du_dtheta[beg:mid], dv_dtheta[beg:mid]), dim=1)
     right = torch.cat((du_dtheta[mid:end], dv_dtheta[mid:end]), dim=1)
     return left - right
@@ -310,8 +329,9 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0, 1.0, 1.0]
+# Loss weights order corresponds to PDE residuals, periodic values, periodic derivatives.
+# The BC tensors have two columns, so weight 2.0 matches the prior sum-of-means PyTorch loss.
+loss_weights =[3.0, 3.0, 2.0, 2.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
