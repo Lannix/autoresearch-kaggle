@@ -119,10 +119,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+5.988e-03 val_mse regression]
   - *Notes:* Switched `TimePDE` sampling to `train_distribution="pseudo"` and resampled PDE points every 500 Adam steps. The Kaggle T4 run finished cleanly, but `val_mse` worsened from `9.460400e-01` to `9.520277e-01`, with a larger train/test gap during L-BFGS, so the extra collocation churn did not improve generalization here.
 
-- [ ] **HYP-6.2: Residual-Based Adaptive Refinement (RAR)**
+- [x] **HYP-6.2: Residual-Based Adaptive Refinement (RAR)**
   - *Idea:* Periodically evaluate the PDE residual on a dense candidate grid, pick the points with the highest error, and manually add them using `data.add_anchors(X_new)`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.783e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-7.2 baseline, evaluated the causal PDE residual on a `96 x 96` candidate grid after Adam, added the top `1536` high-residual points as anchors, then ran the usual short-burst L-BFGS phase on the enlarged PDE set. The run stayed stable and peak VRAM was unchanged (`1471.0 MB`), but L-BFGS spent much longer adapting to the anchor-augmented loss and final `val_mse` worsened from `6.828914e-01` to `6.856742e-01`, so this one-shot RAR pass over-focused the sampled residual hot spots without improving global generalization.
 
 - [ ] **HYP-6.3: R3 Sampling (Retain-Resample-Release)**
   - *Idea:* Write a custom callback that adds high-error points (like RAR) but also *removes* training points where the residual is near zero, avoiding propagation failure and saving compute time.
