@@ -21,3 +21,4 @@ d97a2e7	7.575254e-02	1.95	KEEP	HYP-4.4 exact Fourier hard initial-condition ansa
 1b82e3f	8.380339e-02	2.06	DISCARD	HYP-4.5 hard-IC harmonic bank time=25 theta=5
 0cd5663	8.986620e-02	1.95	DISCARD	HYP-7.8 NAdam warmup with gradient clipping
 403b218	8.628124e-02	1.95	DISCARD	HYP-6.7 hybrid residual-based adaptive refinement
+68ce0b5	5.809172e-02	1.93	KEEP	HYP-4.6 domain normalization with exact chain-rule scaling

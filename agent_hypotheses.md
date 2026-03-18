@@ -103,6 +103,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [DISCARD] | *Delta:* [+8.051e-03 val_mse regression]
   - *Notes:* Kept the exact Fourier hard-IC output transform from HYP-4.4 and swapped the input feature transform to the earlier large harmonic bank with `25` time harmonics and `5` theta harmonics. This was far better than the old soft-IC `(25, 5)` result, but it still regressed from `7.575254e-02` to `8.380339e-02`, increased peak VRAM to `2108.8 MB`, and raised the parameter count to `74242`, so the simpler hard-IC feature set remains best.
 
+- [x] **HYP-4.6: Domain Normalization with Exact Chain-Rule Scaling**
+  - *Idea:* Feed the network only normalized physical coordinates `theta_n, t_n in [-1, 1]`, then compute PDE derivatives in normalized space and rescale them back to the physical LLE using the exact chain rule.
+  - *Outcome:* [KEEP] | *Delta:* [-1.766e-02 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-4.4 exact-Fourier hard-IC baseline, replaced the hard-periodic feature map with a custom network that internally normalizes both physical coordinates to `[-1, 1]`, keeps the exact Fourier hard initial-condition ansatz, and exposes the normalized inputs so the PDE residual can differentiate with respect to normalized coordinates before applying the exact `dt_n / dt` and `dtheta_n / dtheta` scaling factors. On Kaggle T4 this improved `val_mse` from `7.575254e-02` to `5.809172e-02`, slightly reduced peak VRAM to `1981.3 MB`, and lowered the parameter count to `66690`, so the cleaner normalized-coordinate representation generalized better than the earlier `(t_scaled, cos(theta), sin(theta))` feature transform on the hard-IC model.
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
