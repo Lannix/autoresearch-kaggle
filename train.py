@@ -78,6 +78,9 @@ time_center = float((t_min + t_max) * 0.5)
 time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
 theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
+num_domain_points = 30000
+gaussian_collocation_fraction = 0.80
+gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -106,6 +109,51 @@ def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     theta_rel = theta - coeffs["theta_origin"]
     angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
     return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
+
+
+def wrap_theta_to_domain(theta):
+    domain_width = th_max - th_min
+    return ((theta - th_min) % domain_width) + th_min
+
+
+def build_gaussian_biased_collocation_points(num_points):
+    peak_idx = int(np.argmax(u0_samples**2 + v0_samples**2))
+    theta_peak = float(theta_samples[peak_idx])
+    gaussian_count = int(round(num_points * gaussian_collocation_fraction))
+    uniform_count = num_points - gaussian_count
+
+    theta_gaussian = np.random.normal(
+        loc=theta_peak,
+        scale=gaussian_collocation_sigma,
+        size=(gaussian_count, 1),
+    ).astype(np.float32)
+    theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float32)
+
+    theta_uniform = np.random.uniform(
+        th_min,
+        th_max,
+        size=(uniform_count, 1),
+    ).astype(np.float32)
+    theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
+    np.random.shuffle(theta_samples_biased)
+
+    time_samples_uniform = np.linspace(
+        t_min,
+        t_max,
+        num=num_points,
+        endpoint=False,
+        dtype=np.float32,
+    ).reshape(-1, 1)
+    time_samples_uniform += np.float32(0.5 * (t_max - t_min) / num_points)
+    np.random.shuffle(time_samples_uniform)
+
+    collocation_points = np.hstack((theta_samples_biased, time_samples_uniform)).astype(np.float32)
+    print(
+        "[INFO] Static Gaussian-biased collocation: "
+        f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
+        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}"
+    )
+    return collocation_points
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -142,6 +190,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
+custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -202,9 +251,10 @@ data = dde.data.TimePDE(
     geomtime,
     pde,
     [],
-    num_domain=30000,
+    num_domain=0,
     num_boundary=0,
     num_initial=0,
+    anchors=custom_collocation_points,
 )
 model = dde.Model(data, net)
 
