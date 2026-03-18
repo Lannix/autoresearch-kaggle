@@ -6,7 +6,7 @@ This is an experiment to have the AI autonomously optimize a Physics-Informed Ne
 
 Locally:
 - uv version is 0.8.3
-- python 3.11.6 (destination in relative path `.venv\Scripts\Activate.ps1`)
+- python in uv is 3.11.6 (destination in relative path `.venv\Scripts\Activate.ps1`)
 Kaggle:
 - python version is 3.12.12
 - torch version is 2.9.0+cu126
