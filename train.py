@@ -83,6 +83,7 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
+adaptive_pde_weight_total = 6.0
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -194,6 +195,23 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+adaptive_pde_logits = torch.nn.Parameter(
+    torch.zeros(2, device=device, dtype=torch.float32)
+)
+print(
+    "[INFO] Adaptive PDE weights enabled: "
+    f"softmax-normalized total={adaptive_pde_weight_total:.1f}"
+)
+
+
+def get_adaptive_pde_weights(device_override=None, dtype_override=None):
+    weights = adaptive_pde_weight_total * torch.softmax(adaptive_pde_logits, dim=0)
+    if device_override is not None or dtype_override is not None:
+        weights = weights.to(
+            device=device_override if device_override is not None else weights.device,
+            dtype=dtype_override if dtype_override is not None else weights.dtype,
+        )
+    return weights
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -246,8 +264,13 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
+    adaptive_weights = get_adaptive_pde_weights(x.device, x.dtype)
+    residual_scales = torch.sqrt(adaptive_weights)
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [
+        causal_weight * residual_scales[0] * res_u,
+        causal_weight * residual_scales[1] * res_v,
+    ]
 
 
 data = dde.data.TimePDE(
@@ -304,9 +327,11 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
-model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+model.compile(
+    "adam",
+    lr=1e-3,
+    external_trainable_variables=[adaptive_pde_logits],
+)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
@@ -320,7 +345,10 @@ try:
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
     configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
-    model.compile("L-BFGS", loss_weights=loss_weights)
+    model.compile(
+        "L-BFGS",
+        external_trainable_variables=[adaptive_pde_logits],
+    )
     losshistory, train_state = model.train(
         iterations=10000,
         callbacks=[time_callback_lbfgs],
@@ -337,7 +365,8 @@ try:
     net.eval()
     val_mse = evaluate_mse(model_uv, device, dtype=torch.float32)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
-    num_params = sum(p.numel() for p in net.parameters())
+    adaptive_weight_values = get_adaptive_pde_weights().detach().cpu().numpy()
+    num_params = sum(p.numel() for p in net.parameters()) + adaptive_pde_logits.numel()
 
     print("\n---")
     print(f"val_mse:          {val_mse:.6e}")
@@ -345,6 +374,10 @@ try:
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
+    print(
+        "adaptive_pde_weights: "
+        f"u={adaptive_weight_values[0]:.4f}, v={adaptive_weight_values[1]:.4f}"
+    )
     print("---")
 
 except Exception as e:
