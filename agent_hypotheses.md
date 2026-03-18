@@ -149,6 +149,11 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+1.125e-02 val_mse regression]
   - *Notes:* Starting from the kept HYP-7.2 baseline, added a callback that every `2000` Adam steps scored `20000` fresh candidate points, sampled `512` new anchors from a RAD-style PDF with `k = 1`, `c = 1`, and appended them to the PDE set until `2048` extra anchors were added. The weighted sampling strongly favored higher-residual candidates, but the enlarged PDE set still regressed from `6.828914e-01` to `6.941374e-01`, raised peak VRAM to `2196.2 MB`, and slowed the L-BFGS phase, so this incremental RAR-D variant did not improve generalization on the current budget.
 
+- [x] **HYP-6.7: Hybrid RAR with Static Base Pool and Moving Adaptive Pool**
+  - *Idea:* Keep a fixed structural collocation pool for global coverage, maintain a second adaptive pool for residual hot spots, and periodically refresh only part of that adaptive pool with the worst points from a fresh candidate set.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.053e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.4 exact-Fourier hard-IC baseline, replaced the single `30000`-point PDE sample with `20000` static Hammersley base points plus `10000` pseudo-random adaptive points, then during Adam refreshed `1000` adaptive points every `2500` steps by retaining the current worst seekers and injecting the top residual outliers from `20000` new candidates. The hybrid logic worked mechanically and completed two refreshes before the Adam time cap, but it regressed from `7.575254e-02` to `8.628124e-02`, held peak VRAM essentially flat at `1999.1 MB`, and left L-BFGS spending the rest of the budget recovering from a worse collocation distribution, so the stronger hard-IC baseline still prefers the simpler fixed PDE set.
+
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
   - *Outcome:* [DISCARD] | *Delta:* [+2.465e-03 val_mse regression]
