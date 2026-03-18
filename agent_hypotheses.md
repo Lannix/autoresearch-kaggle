@@ -93,6 +93,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [DISCARD] | *Delta:* [`(0, 1)` remains best among tested settings]
   - *Notes:* Sweep results: `(1, 2)` regressed to `6.940603e-01`, `(0, 2)` regressed to `6.908429e-01`, `(1, 1)` regressed to `6.940841e-01`, and the user-requested large bank `(25, 5)` regressed to `6.951220e-01`. All tested expansions were worse than the kept `(0, 1)` baseline at `6.858262e-01`; wider harmonic banks also increased parameter count without improving validation, so the current best harmonic setting remains one theta harmonic and no time harmonics.
 
+- [x] **HYP-4.4: Exact Fourier Hard Initial-Condition Ansatz**
+  - *Idea:* Replace the point-set IC losses with a hard output transform that reconstructs the exact initial slice from its Fourier series and gates the network correction with `1 - exp(-5 * (t - t0))`.
+  - *Outcome:* [KEEP] | *Delta:* [-6.071e-01 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-7.2 baseline, removed the soft IC losses entirely and applied a hard output transform that reconstructs both real and imaginary initial-condition fields from exact `rfft` coefficients on the original theta grid, then adds the network residual through a temporal exponential gate. On Kaggle T4 this dramatically improved `val_mse` from `6.828914e-01` to `7.575254e-02`, with peak VRAM rising modestly to `1999.1 MB` and the time-bounded L-BFGS phase using nearly the full training budget to refine the PDE-only loss.
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 

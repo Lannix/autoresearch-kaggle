@@ -17,3 +17,4 @@ f8e13a7	6.856742e-01	1.44	DISCARD	HYP-6.2 residual-based adaptive refinement
 0da4dc5	6.949009e-01	2.53	DISCARD	HYP-6.3 R3 adaptive resampling
 7ab8c13	6.864758e-01	3.72	DISCARD	HYP-6.5 residual-based adaptive distribution
 88e3de8	6.941374e-01	2.14	DISCARD	HYP-6.6 RAR-D adaptive refinement
+d97a2e7	7.575254e-02	1.95	KEEP	HYP-4.4 exact Fourier hard initial-condition ansatz
