@@ -14,3 +14,4 @@ c268446	6.908429e-01	1.44	DISCARD	HYP-4.3 harmonic search with time=0 theta=2
 9425a51	6.841658e-01	0.89	DISCARD	HYP-8.1 mixed precision training
 f8e13a7	6.856742e-01	1.44	DISCARD	HYP-6.2 residual-based adaptive refinement
 343f45f	1.170289e+00	1.75	DISCARD	HYP-1.1 sine activations
+0da4dc5	6.949009e-01	2.53	DISCARD	HYP-6.3 R3 adaptive resampling

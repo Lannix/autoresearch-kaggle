@@ -124,8 +124,13 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+2.783e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-7.2 baseline, evaluated the causal PDE residual on a `96 x 96` candidate grid after Adam, added the top `1536` high-residual points as anchors, then ran the usual short-burst L-BFGS phase on the enlarged PDE set. The run stayed stable and peak VRAM was unchanged (`1471.0 MB`), but L-BFGS spent much longer adapting to the anchor-augmented loss and final `val_mse` worsened from `6.828914e-01` to `6.856742e-01`, so this one-shot RAR pass over-focused the sampled residual hot spots without improving global generalization.
 
-- [ ] **HYP-6.3: R3 Sampling (Retain-Resample-Release)**
+- [x] **HYP-6.3: R3 Sampling (Retain-Resample-Release)**
   - *Idea:* Write a custom callback that adds high-error points (like RAR) but also *removes* training points where the residual is near zero, avoiding propagation failure and saving compute time.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.201e-02 val_mse regression]
+  - *Notes:* Implemented an R3-style callback during Adam that evaluated the causal PDE residual on the current `30000` PDE points every `1000` steps, retained only points with residual above the current mean, and refilled the rest with fresh interior samples so the collocation budget stayed fixed. The retain rate stabilized around `19%` to `31%`, but Kaggle T4 regressed from `6.828914e-01` to `6.949009e-01` and peak VRAM rose to `2590.8 MB`, so aggressively releasing low-residual points disrupted the stronger baseline distribution more than it helped.
+
+- [ ] **HYP-6.5: Residual-Based Adaptive Distribution (RAD)**
+  - *Idea:* Periodically replace the PDE collocation set with a new set sampled from a residual-weighted PDF `p(x) ∝ ε(x)^k / E[ε(x)^k] + c`, using the paper's default `k = 1`, `c = 1`.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
