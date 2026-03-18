@@ -222,6 +222,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+1.411e-02 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.4 exact-Fourier hard-IC baseline, swapped the Adam phase for a custom clipped `NAdam` optimizer with `lr=2e-3`, `gamma=0.99954`, and `max_grad_norm=1.0`, while leaving the hard-IC ansatz and L-BFGS schedule unchanged. Kaggle T4 trained stably, but the optimizer plateaued at a much worse PDE-only loss surface and final `val_mse` regressed from `7.575254e-02` to `8.986620e-02`, so the benchmark-style first-order schedule did not transfer cleanly to the DeepXDE setup.
 
+- [x] **HYP-7.9: Adam Learning-Rate Scheduler Before L-BFGS**
+  - *Idea:* Add an Adam learning-rate scheduler so the first-order phase ends at a much lower step size before handing off to L-BFGS, ideally giving the second-order phase a cleaner local Hessian.
+  - *Outcome:* [DISCARD] | *Delta:* [+2.794e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, kept Adam as the first-stage optimizer but replaced the static `1e-3` rate with a clamped cosine-style LambdaLR schedule that decayed from `1e-3` to `1e-4` by step `4000` and to `1e-5` by step `6000`, then held there until the time callback stopped Adam. Kaggle T4 stayed stable, pushed Adam all the way to `6000` steps, and handed L-BFGS a smoother loss surface that refined cleanly to `10999` total steps while keeping peak VRAM flat at `1981.3 MB`, but final `val_mse` still regressed slightly from `5.809172e-02` to `5.837114e-02`, so the scheduler improved optimization behavior without beating the current best validation result.
+
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
 - [x] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
