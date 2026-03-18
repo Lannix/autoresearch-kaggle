@@ -83,8 +83,6 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-rff_feature_count = 32
-rff_sigma = 4.0
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -164,9 +162,7 @@ def build_gaussian_biased_collocation_points(num_points):
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        rff_matrix = torch.randn(2, rff_feature_count, dtype=torch.float32) * rff_sigma
-        self.register_buffer("rff_matrix", rff_matrix)
-        self.core = dde.nn.FNN([2 * rff_feature_count] + [128] * 5 + [2], "tanh", "Glorot uniform")
+        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
         self.regularizer = self.core.regularizer
         self.last_x_norm = None
 
@@ -182,12 +178,8 @@ class NormalizedChainRuleNet(dde.nn.NN):
         time_coord = x_norm[:, 1:2] / time_norm_scale + time_center
         return theta, time_coord
 
-    def encode_rff(self, x_norm):
-        phases = x_norm @ self.rff_matrix
-        return torch.cat((torch.cos(phases), torch.sin(phases)), dim=1)
-
     def forward_from_normalized(self, x_norm):
-        raw = self.core(self.encode_rff(x_norm))
+        raw = self.core(x_norm)
         theta, time_coord = self.denormalize_inputs(x_norm)
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
@@ -202,7 +194,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(f"[INFO] RFF encoding: {rff_feature_count} frequencies, sigma={rff_sigma:.1f}")
 
 # ==========================================
 # 4. Physics / LLE Residual
