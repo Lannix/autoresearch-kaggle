@@ -216,6 +216,11 @@ max_train_time = TIME_BUDGET - EVAL_RESERVE
 adam_time_limit = max_train_time * 0.60
 lbfgs_total_iters = 5000
 lbfgs_inner_iters = 250
+adam_base_lr = 1e-3
+adam_mid_lr = 1e-4
+adam_min_lr = 1e-5
+adam_mid_step = 4000
+adam_end_step = 6000
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
@@ -241,6 +246,28 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
         lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
     )
 
+
+def cosine_interp_lr(step, start_step, end_step, start_lr, end_lr):
+    if end_step <= start_step:
+        return end_lr
+    progress = min(max((step - start_step) / (end_step - start_step), 0.0), 1.0)
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return end_lr + (start_lr - end_lr) * cosine
+
+
+def adam_lr_lambda(step):
+    if step <= adam_mid_step:
+        lr = cosine_interp_lr(step, 0, adam_mid_step, adam_base_lr, adam_mid_lr)
+    else:
+        lr = cosine_interp_lr(
+            step,
+            adam_mid_step,
+            adam_end_step,
+            adam_mid_lr,
+            adam_min_lr,
+        )
+    return lr / adam_base_lr
+
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
     x = torch.cat((th_in, t_in), dim=1)
@@ -253,7 +280,12 @@ def model_uv(t_in, th_in, need_x=False):
 
 # Loss weights order corresponds to the PDE residual outputs.
 loss_weights =[3.0, 3.0]
-model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+model.compile(
+    "adam",
+    lr=adam_base_lr,
+    decay=("lambda", adam_lr_lambda),
+    loss_weights=loss_weights,
+)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
