@@ -72,6 +72,27 @@ geom = dde.geometry.Interval(th_min, th_max)
 timedomain = dde.geometry.TimeDomain(t_min, t_max)
 geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
+HYBRID_RAR_BASE_POINTS = 20000
+HYBRID_RAR_ADAPTIVE_POINTS = 10000
+HYBRID_RAR_PERIOD = 2500
+HYBRID_RAR_CANDIDATES = 20000
+HYBRID_RAR_REFRESH_COUNT = 1000
+HYBRID_RAR_MAX_UPDATES = 3
+HYBRID_RAR_SCORE_BATCH = 2048
+
+
+def sample_interior_points(count, random):
+    if count <= 0:
+        return np.empty((0, 2), dtype=np.float32)
+    return geomtime.random_points(count, random=random).astype(np.float32)
+
+
+base_collocation_points = sample_interior_points(HYBRID_RAR_BASE_POINTS, random="Hammersley")
+adaptive_collocation_points = sample_interior_points(HYBRID_RAR_ADAPTIVE_POINTS, random="pseudo")
+initial_collocation_points = np.vstack(
+    (base_collocation_points, adaptive_collocation_points)
+).astype(np.float32)
+
 # ==========================================
 # 3. Physics / LLE Residual
 # ==========================================
@@ -99,9 +120,10 @@ data = dde.data.TimePDE(
     geomtime,
     pde,
     [],
-    num_domain=30000,
+    num_domain=0,
     num_boundary=0,
     num_initial=0,
+    anchors=initial_collocation_points,
 )
 
 # ==========================================
@@ -199,15 +221,176 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
+
+def causal_residual_scores(points, batch_size):
+    was_training = net.training
+    net.train(mode=False)
+    scores = []
+
+    with torch.enable_grad():
+        for start in range(0, points.shape[0], batch_size):
+            batch = points[start : start + batch_size]
+            x = torch.as_tensor(batch, device=device, dtype=torch.float32)
+            x.requires_grad_(True)
+
+            uv = net(x)
+            u, v = uv[:, 0:1], uv[:, 1:2]
+
+            grad_u = torch.autograd.grad(
+                u,
+                x,
+                grad_outputs=torch.ones_like(u),
+                create_graph=True,
+                retain_graph=True,
+            )[0]
+            grad_v = torch.autograd.grad(
+                v,
+                x,
+                grad_outputs=torch.ones_like(v),
+                create_graph=True,
+                retain_graph=True,
+            )[0]
+
+            du_dt = grad_u[:, 1:2]
+            dv_dt = grad_v[:, 1:2]
+            du_dth = grad_u[:, 0:1]
+            dv_dth = grad_v[:, 0:1]
+
+            du_dth2 = torch.autograd.grad(
+                du_dth,
+                x,
+                grad_outputs=torch.ones_like(du_dth),
+                create_graph=False,
+                retain_graph=True,
+            )[0][:, 0:1]
+            dv_dth2 = torch.autograd.grad(
+                dv_dth,
+                x,
+                grad_outputs=torch.ones_like(dv_dth),
+                create_graph=False,
+                retain_graph=False,
+            )[0][:, 0:1]
+
+            intensity = u.square() + v.square()
+            res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
+            res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
+            time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
+            causal_weight = torch.exp(-2.0 * time_frac)
+            residual_sq = (causal_weight * res_u).square() + (causal_weight * res_v).square()
+            scores.append(residual_sq.detach().cpu().numpy().reshape(-1))
+
+            del x, uv, u, v, grad_u, grad_v, du_dt, dv_dt, du_dth, dv_dth, du_dth2, dv_dth2
+            del intensity, res_u, res_v, time_frac, causal_weight, residual_sq
+
+    net.train(mode=was_training)
+    return np.concatenate(scores, axis=0)
+
+
+def select_top_points(points, scores, count):
+    if count <= 0:
+        return np.empty((0, points.shape[1]), dtype=points.dtype), np.empty((0,), dtype=scores.dtype)
+    if count >= points.shape[0]:
+        order = np.argsort(scores)[::-1]
+        return points[order], scores[order]
+    idx = np.argpartition(scores, -count)[-count:]
+    idx = idx[np.argsort(scores[idx])[::-1]]
+    return points[idx], scores[idx]
+
+
+class HybridRARCallback(dde.callbacks.Callback):
+    def __init__(
+        self,
+        base_points,
+        adaptive_points,
+        period,
+        candidate_count,
+        refresh_count,
+        max_updates,
+        score_batch,
+    ):
+        super().__init__()
+        self.base_points = np.asarray(base_points, dtype=np.float32)
+        self.adaptive_points = np.asarray(adaptive_points, dtype=np.float32)
+        self.period = period
+        self.candidate_count = candidate_count
+        self.refresh_count = refresh_count
+        self.max_updates = max_updates
+        self.score_batch = score_batch
+        self.updates_completed = 0
+        self.epochs_since_refresh = 0
+
+    def on_train_begin(self):
+        print(
+            "[INFO] Hybrid RAR enabled with "
+            f"{self.base_points.shape[0]} static base points and "
+            f"{self.adaptive_points.shape[0]} adaptive points."
+        )
+
+    def on_epoch_end(self):
+        if self.updates_completed >= self.max_updates:
+            return
+
+        self.epochs_since_refresh += 1
+        if self.epochs_since_refresh < self.period:
+            return
+        self.epochs_since_refresh = 0
+
+        retain_count = max(0, self.adaptive_points.shape[0] - self.refresh_count)
+        adaptive_scores = causal_residual_scores(self.adaptive_points, self.score_batch)
+        retained_points, retained_scores = select_top_points(
+            self.adaptive_points, adaptive_scores, retain_count
+        )
+
+        candidate_points = sample_interior_points(self.candidate_count, random="pseudo")
+        candidate_scores = causal_residual_scores(candidate_points, self.score_batch)
+        injected_points, injected_scores = select_top_points(
+            candidate_points, candidate_scores, self.refresh_count
+        )
+
+        self.adaptive_points = np.vstack((retained_points, injected_points)).astype(np.float32)
+        refreshed_points = np.vstack((self.base_points, self.adaptive_points)).astype(np.float32)
+        self.model.data.replace_with_anchors(refreshed_points)
+        self.model.data.test_x = None
+        self.model.data.test_y = None
+        self.model.data.test_aux_vars = None
+        self.model.train_state.set_data_train(
+            self.model.data.train_x,
+            self.model.data.train_y,
+            self.model.data.train_aux_vars,
+        )
+        self.model.train_state.set_data_test(*self.model.data.test())
+
+        self.updates_completed += 1
+        print(
+            "[INFO] Hybrid RAR refresh "
+            f"{self.updates_completed}/{self.max_updates}: "
+            f"retained mean residual {retained_scores.mean():.3e}, "
+            f"injected mean residual {injected_scores.mean():.3e}, "
+            f"candidate mean residual {candidate_scores.mean():.3e}."
+        )
+
 # Loss weights order corresponds to the PDE residual outputs.
 loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
+hybrid_rar_callback = HybridRARCallback(
+    base_points=base_collocation_points,
+    adaptive_points=adaptive_collocation_points,
+    period=HYBRID_RAR_PERIOD,
+    candidate_count=HYBRID_RAR_CANDIDATES,
+    refresh_count=HYBRID_RAR_REFRESH_COUNT,
+    max_updates=HYBRID_RAR_MAX_UPDATES,
+    score_batch=HYBRID_RAR_SCORE_BATCH,
+)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
+    losshistory, train_state = model.train(
+        iterations=100000,
+        callbacks=[time_callback_adam, hybrid_rar_callback],
+        display_every=1000,
+    )
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
