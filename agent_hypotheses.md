@@ -174,10 +174,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
-- [ ] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
+- [x] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
   - *Idea:* Call `dde.config.set_default_float("mixed")`. This utilizes T4 Tensor Cores, saving ~50% VRAM and potentially doubling step throughput, allowing a wider network or more points.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.274e-03 val_mse regression]
+  - *Notes:* Enabled DeepXDE mixed precision and set PyTorch's default device to CUDA so the framework's internal autocast path actually targeted the T4. This sharply reduced peak VRAM from `1470.6 MB` to `908.0 MB` and let Adam reach about `25000` steps within the same wall-clock budget, but the final `val_mse` worsened from `6.828914e-01` to `6.841658e-01` and L-BFGS only made a tiny follow-up improvement, so the faster mixed-precision trajectory generalized worse than the float32 baseline.
 
 - [ ] **HYP-8.2: Float64 Precision for Hessians**
   - *Idea:* Call `dde.config.set_default_float("float64")`. Stiff PDEs suffer from FP32 rounding errors in `dde.grad.hessian`, which halts L-BFGS early. FP64 slows down iterations but can drastically improve mathematical precision and final val_mse.
