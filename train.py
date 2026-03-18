@@ -78,6 +78,7 @@ time_center = float((t_min + t_max) * 0.5)
 time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
 theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
+periodic_pair_count = 6000
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -106,6 +107,23 @@ def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     theta_rel = theta - coeffs["theta_origin"]
     angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
     return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
+
+
+def build_periodic_boundary_pairs(num_pairs):
+    boundary_times = timedomain.random_points(num_pairs, random="pseudo").astype(np.float32)
+    left_points = np.hstack(
+        (
+            np.full((num_pairs, 1), th_min, dtype=np.float32),
+            boundary_times,
+        )
+    )
+    right_points = np.hstack(
+        (
+            np.full((num_pairs, 1), th_max, dtype=np.float32),
+            boundary_times,
+        )
+    )
+    return left_points, right_points
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -142,6 +160,23 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
+
+boundary_left_points, boundary_right_points = build_periodic_boundary_pairs(periodic_pair_count)
+
+
+class PairedBoundaryBC:
+    def __init__(self, left_points, right_points, error_fn):
+        self.left_points = np.asarray(left_points, dtype=np.float32)
+        self.right_points = np.asarray(right_points, dtype=np.float32)
+        self.points = np.vstack((self.left_points, self.right_points)).astype(np.float32)
+        self.error_fn = error_fn
+
+    def collocation_points(self, X):
+        return self.points
+
+    def error(self, X, inputs, outputs, beg, end, aux_var=None):
+        mid = beg + (end - beg) // 2
+        return self.error_fn(inputs, outputs, beg, mid, end)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -198,10 +233,34 @@ def pde(x, y):
     return [causal_weight * res_u, causal_weight * res_v]
 
 
+def periodic_value_error(inputs, outputs, beg, mid, end):
+    return outputs[beg:mid, 0:2] - outputs[mid:end, 0:2]
+
+
+def periodic_derivative_error(inputs, outputs, beg, mid, end):
+    du_dtheta = dde.grad.jacobian(outputs, inputs, i=0, j=0)
+    dv_dtheta = dde.grad.jacobian(outputs, inputs, i=1, j=0)
+    left = torch.cat((du_dtheta[beg:mid], dv_dtheta[beg:mid]), dim=1)
+    right = torch.cat((du_dtheta[mid:end], dv_dtheta[mid:end]), dim=1)
+    return left - right
+
+
+periodic_value_bc = PairedBoundaryBC(
+    boundary_left_points,
+    boundary_right_points,
+    periodic_value_error,
+)
+periodic_derivative_bc = PairedBoundaryBC(
+    boundary_left_points,
+    boundary_right_points,
+    periodic_derivative_error,
+)
+
+
 data = dde.data.TimePDE(
     geomtime,
     pde,
-    [],
+    [periodic_value_bc, periodic_derivative_bc],
     num_domain=30000,
     num_boundary=0,
     num_initial=0,
@@ -252,7 +311,7 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+loss_weights =[3.0, 3.0, 1.0, 1.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
