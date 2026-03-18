@@ -98,6 +98,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [KEEP] | *Delta:* [-6.071e-01 val_mse improvement]
   - *Notes:* Starting from the kept HYP-7.2 baseline, removed the soft IC losses entirely and applied a hard output transform that reconstructs both real and imaginary initial-condition fields from exact `rfft` coefficients on the original theta grid, then adds the network residual through a temporal exponential gate. On Kaggle T4 this dramatically improved `val_mse` from `6.828914e-01` to `7.575254e-02`, with peak VRAM rising modestly to `1999.1 MB` and the time-bounded L-BFGS phase using nearly the full training budget to refine the PDE-only loss.
 
+- [x] **HYP-4.5: Revisit Large Harmonic Bank on the Exact Hard-IC Baseline**
+  - *Idea:* Re-test the previously discarded `(time=25, theta=5)` Fourier feature bank, but now on top of the kept exact-Fourier hard initial-condition ansatz instead of the older soft-IC baseline.
+  - *Outcome:* [DISCARD] | *Delta:* [+8.051e-03 val_mse regression]
+  - *Notes:* Kept the exact Fourier hard-IC output transform from HYP-4.4 and swapped the input feature transform to the earlier large harmonic bank with `25` time harmonics and `5` theta harmonics. This was far better than the old soft-IC `(25, 5)` result, but it still regressed from `7.575254e-02` to `8.380339e-02`, increased peak VRAM to `2108.8 MB`, and raised the parameter count to `74242`, so the simpler hard-IC feature set remains best.
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
