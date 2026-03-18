@@ -115,8 +115,6 @@ max_train_time = TIME_BUDGET - EVAL_RESERVE
 adam_time_limit = max_train_time * 0.60
 lbfgs_total_iters = 5000
 lbfgs_inner_iters = 250
-r3_period = 1000
-r3_batch_size = 2048
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
@@ -142,70 +140,6 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
         lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
     )
 
-
-def residual_scores_for_points(points_np, batch_size):
-    scores = []
-    for start in range(0, points_np.shape[0], batch_size):
-        stop = start + batch_size
-        x_batch = torch.tensor(
-            points_np[start:stop],
-            device=device,
-            dtype=torch.float32,
-        ).requires_grad_(True)
-        residual_terms = pde(x_batch, net(x_batch))
-        score = torch.zeros(x_batch.shape[0], device=device, dtype=torch.float32)
-        for term in residual_terms:
-            score = score + term[:, 0] ** 2
-        scores.append(torch.sqrt(score + 1e-12).detach().cpu().numpy())
-        del x_batch, residual_terms, score
-    return np.concatenate(scores, axis=0)
-
-
-class R3Sampler(dde.callbacks.Callback):
-    def __init__(self, period, batch_size):
-        super().__init__()
-        self.period = period
-        self.batch_size = batch_size
-
-    def on_epoch_end(self):
-        step = self.model.train_state.step
-        if step == 0 or step % self.period != 0:
-            return
-
-        current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
-        residual_scores = residual_scores_for_points(current_points, self.batch_size)
-        threshold = float(np.mean(residual_scores))
-        retain_mask = residual_scores > threshold
-        retained = current_points[retain_mask]
-        num_resampled = current_points.shape[0] - retained.shape[0]
-
-        if num_resampled <= 0:
-            weakest_idx = int(np.argmin(residual_scores))
-            retained = np.delete(current_points, weakest_idx, axis=0)
-            num_resampled = 1
-
-        refreshed = geomtime.random_points(num_resampled, random="pseudo").astype(np.float32)
-        updated_points = np.vstack((retained, refreshed))
-        np.random.shuffle(updated_points)
-
-        self.model.data.replace_with_anchors(updated_points)
-        self.model.data.test_x = None
-        self.model.data.test_y = None
-        self.model.data.test_aux_vars = None
-        self.model.train_state.set_data_train(
-            self.model.data.train_x,
-            self.model.data.train_y,
-            self.model.data.train_aux_vars,
-        )
-        self.model.train_state.set_data_test(*self.model.data.test())
-
-        retained_pct = 100.0 * retained.shape[0] / current_points.shape[0]
-        print(
-            f"[INFO] R3 resample at step {step}: retained {retained.shape[0]}/{current_points.shape[0]} "
-            f"points ({retained_pct:.1f}%), threshold={threshold:.3e}"
-        )
-
-
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
     x = torch.cat((th_in, t_in), dim=1)
@@ -222,15 +156,10 @@ loss_weights =[3.0, 3.0, 50.0, 50.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
-r3_callback = R3Sampler(r3_period, r3_batch_size)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(
-        iterations=100000,
-        callbacks=[time_callback_adam, r3_callback],
-        display_every=1000,
-    )
+    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
