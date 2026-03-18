@@ -49,6 +49,11 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+3.414e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, swapped the core `dde.nn.FNN` activation from `tanh` to `silu` while leaving the exact Fourier hard-IC ansatz, normalized-coordinate PDE residual, and optimizer schedule unchanged. The Kaggle T4 run stayed numerically stable and Adam descended quickly, but final `val_mse` regressed from `5.809172e-02` to `6.150582e-02`, peak VRAM rose sharply to `3330.2 MB`, and the L-BFGS phase effectively stalled after a few extra iterations, so this simple activation swap did not improve the current architecture.
 
+- [x] **HYP-1.7: GELU Activation on the Normalized Hard-IC Model**
+  - *Idea:* Replace the `tanh` hidden activations in the kept normalized hard-IC model with `gelu` to keep smooth second derivatives while testing a softer nonlinearity than `silu`.
+  - *Outcome:* [DISCARD] | *Delta:* [+1.582e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, swapped the core `dde.nn.FNN` activation from `tanh` to `gelu` while leaving the exact Fourier hard-IC ansatz, normalized-coordinate PDE residual, and optimizer schedule unchanged. Kaggle T4 stayed stable and let L-BFGS run much longer than the SiLU variant, but final `val_mse` still regressed from `5.809172e-02` to `5.967371e-02`, peak VRAM increased to `2494.0 MB`, and the smoother activation still failed to beat the original `tanh` baseline, so `gelu` is better than `silu` here but not a new best.
+
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
 
