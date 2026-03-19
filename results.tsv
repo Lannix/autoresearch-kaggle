@@ -45,3 +45,4 @@ feca3a6	5.719010e-02	1.93	DISCARD	HYP-6.10 mixed beta and uniform time sampling
 74ed4a0	6.123170e-02	1.94	DISCARD	HYP-7.11 intensity-scaled residuals
 5be4628	6.191092e-02	1.93	DISCARD	HYP-7.12 MAE loss
 e70fdca	5.797618e-02	1.94	DISCARD	HYP-5.2 CW background matching penalty
+d3ff945	5.701195e-02	2.11	DISCARD	HYP-4.8 periodic loss only in LBFGS

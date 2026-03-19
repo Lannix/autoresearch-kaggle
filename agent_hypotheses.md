@@ -133,10 +133,10 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [DISCARD] | *Delta:* [+1.311e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 baseline, added `6000` paired left/right boundary times and two explicit BC losses: one for `(u, v)` continuity and one for `(u_theta, v_theta)` continuity, with the derivative BC computed in normalized coordinates and rescaled by the exact `dtheta_n / dtheta` chain-rule factor to match the prior PyTorch formulation. The BC losses themselves converged to nearly zero, but Kaggle T4 still regressed from `5.809172e-02` to `5.940263e-02`, peak VRAM jumped sharply to `4333.1 MB`, and the heavier boundary-gradient bookkeeping cut the total optimizer progress down to `5064` steps, so the current hard-IC normalized model already appears periodic enough without the extra explicit PBC terms.
 
-- [ ] **HYP-4.8: Periodic Boundary Losses Only During L-BFGS**
+- [x] **HYP-4.8: Periodic Boundary Losses Only During L-BFGS**
   - *Idea:* Reuse the best explicit periodic BC loss from HYP-4.7, but enable it only during the second-order L-BFGS phase so Adam keeps the cheap baseline objective while refinement enforces boundary consistency.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.494e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, kept Adam on the original two-channel PDE objective, then turned on the full HYP-4.7 periodic value and derivative losses only for the L-BFGS phase using `6000` fixed left/right boundary pairs and weights `[2.0, 2.0]` for the periodic channels. Kaggle T4 stayed stable and the periodic losses were driven extremely close to zero during L-BFGS (roughly `7e-06` to `2e-05` by the end), but final `val_mse` still regressed from `5.666258e-02` to `5.701195e-02`, peak VRAM rose to `2156.8 MB`, and total progress fell to `10509` steps, so restricting the periodic constraints to the second-order phase reduced the original overhead but still did not beat the simpler baseline.
 
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
