@@ -253,7 +253,7 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Notes:* Weighted both PDE residual components by `exp(-2 * t_norm)` while keeping the hard-periodic feature transform and IC losses unchanged. On Kaggle T4 this improved `val_mse` from `6.858262e-01` to `6.840374e-01`, kept peak VRAM essentially flat (`1470.7 MB`), and slightly shortened total training time, so emphasizing early-time consistency appears to help this LLE trajectory.
 
 - [ ] **HYP-7.5: PDE Residual Splitting**
-  - *Idea:* In `pde(x,y)`, return the linear (dispersion) and non-linear (Kerr) terms as multiple separate outputs in a list: `return [res_linear, res_nonlinear]`. Weight them independently in `model.compile(loss_weights=[...])`.
+  - *Idea:* In `pde(x, y)`, split the LLE residual into separate linear and Kerr channels for each field component so DeepXDE can weight those pieces independently during Adam and L-BFGS.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
