@@ -305,7 +305,7 @@ def model_uv(t_in, th_in, need_x=False):
 
 # Loss weights order corresponds to the PDE residual outputs.
 loss_weights =[3.0, 3.0]
-model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+model.compile("adam", lr=1e-3, loss="mean absolute error", loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
@@ -319,7 +319,7 @@ try:
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
     configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
-    model.compile("L-BFGS", loss_weights=loss_weights)
+    model.compile("L-BFGS", loss="mean absolute error", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
         callbacks=[time_callback_lbfgs],

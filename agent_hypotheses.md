@@ -287,6 +287,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+4.569e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, multiplied both PDE residual channels by a detached intensity factor `1 / (1 + |psi|^2)` on top of the existing causal weighting so high-intensity breather points contributed less to the loss. Kaggle T4 stayed stable and peak VRAM remained nearly flat at `1981.8 MB`, but the scaled objective became too easy: Adam drove the weighted loss down to `7.96e-04`, L-BFGS stopped after only `7484` total steps, and final `val_mse` regressed from `5.666258e-02` to `6.123170e-02`, so flattening the landscape this way under-trained the true physics instead of improving background fidelity.
 
+- [ ] **HYP-7.12: Mean-Absolute-Error PDE Loss**
+  - *Idea:* Keep the current hard-IC and static-collocation baseline, but replace the default MSE objective with MAE so the large peak residuals do not dominate Adam and L-BFGS updates as strongly.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
 - [x] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
