@@ -47,6 +47,7 @@ v0_samples = np.asarray(v0, dtype=np.float64).reshape(-1)
 theta_step = float(np.median(np.diff(theta_samples)))
 theta_period = float(theta_step * theta_samples.size)
 theta_origin = float(theta_samples[0])
+theta_peak = float(theta_samples[int(np.argmax(u0_samples**2 + v0_samples**2))])
 
 
 def build_real_fourier_coeffs(values):
@@ -192,6 +193,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+print("[INFO] Edge damping prior: edge_mask=theta_norm^2, loss_weights=[3.0, 3.0, 0.5, 0.5]")
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -244,8 +246,11 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
+    edge_mask = x_norm[:, 0:1].square()
+    penalty_u = edge_mask * grad_u_norm[:, 0:1]
+    penalty_v = edge_mask * grad_v_norm[:, 0:1]
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [causal_weight * res_u, causal_weight * res_v, penalty_u, penalty_v]
 
 
 data = dde.data.TimePDE(
@@ -303,7 +308,7 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+loss_weights =[3.0, 3.0, 0.5, 0.5]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
