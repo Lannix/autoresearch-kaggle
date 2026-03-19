@@ -84,14 +84,11 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-periodic_pair_count = 6000
-lbfgs_periodic_loss_active = False
 
 # ==========================================
 # 3. Neural Network Architecture
 # ==========================================
 ic_fourier_cache = {}
-periodic_boundary_cache = {}
 
 
 def get_ic_fourier_tensors(device, dtype):
@@ -161,23 +158,6 @@ def build_gaussian_biased_collocation_points(num_points):
     return collocation_points
 
 
-def build_periodic_boundary_pairs(num_pairs):
-    boundary_times = np.random.uniform(t_min, t_max, size=(num_pairs, 1)).astype(np.float32)
-    left_points = np.hstack(
-        (
-            np.full((num_pairs, 1), th_min, dtype=np.float32),
-            boundary_times,
-        )
-    ).astype(np.float32)
-    right_points = np.hstack(
-        (
-            np.full((num_pairs, 1), th_max, dtype=np.float32),
-            boundary_times,
-        )
-    ).astype(np.float32)
-    return left_points, right_points
-
-
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
@@ -213,65 +193,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-boundary_left_points, boundary_right_points = build_periodic_boundary_pairs(periodic_pair_count)
-
-
-def get_periodic_boundary_tensors(device, dtype):
-    key = (device.type, device.index, str(dtype))
-    if key not in periodic_boundary_cache:
-        periodic_boundary_cache[key] = {
-            "left": torch.as_tensor(boundary_left_points, device=device, dtype=dtype),
-            "right": torch.as_tensor(boundary_right_points, device=device, dtype=dtype),
-        }
-    return periodic_boundary_cache[key]
-
-
-def periodic_boundary_losses(device, dtype):
-    boundary_tensors = get_periodic_boundary_tensors(device, dtype)
-
-    left_norm = net.normalize_inputs(boundary_tensors["left"]).detach().requires_grad_(True)
-    right_norm = net.normalize_inputs(boundary_tensors["right"]).detach().requires_grad_(True)
-
-    left_outputs = net.forward_from_normalized(left_norm)
-    right_outputs = net.forward_from_normalized(right_norm)
-    value_error = left_outputs - right_outputs
-
-    left_du_norm = torch.autograd.grad(
-        left_outputs[:, 0:1],
-        left_norm,
-        grad_outputs=torch.ones_like(left_outputs[:, 0:1]),
-        create_graph=True,
-        retain_graph=True,
-    )[0][:, 0:1]
-    left_dv_norm = torch.autograd.grad(
-        left_outputs[:, 1:2],
-        left_norm,
-        grad_outputs=torch.ones_like(left_outputs[:, 1:2]),
-        create_graph=True,
-        retain_graph=True,
-    )[0][:, 0:1]
-    right_du_norm = torch.autograd.grad(
-        right_outputs[:, 0:1],
-        right_norm,
-        grad_outputs=torch.ones_like(right_outputs[:, 0:1]),
-        create_graph=True,
-        retain_graph=True,
-    )[0][:, 0:1]
-    right_dv_norm = torch.autograd.grad(
-        right_outputs[:, 1:2],
-        right_norm,
-        grad_outputs=torch.ones_like(right_outputs[:, 1:2]),
-        create_graph=True,
-        retain_graph=True,
-    )[0][:, 0:1]
-    derivative_error = theta_norm_scale * torch.cat(
-        (
-            left_du_norm - right_du_norm,
-            left_dv_norm - right_dv_norm,
-        ),
-        dim=1,
-    )
-    return value_error, derivative_error
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -325,14 +246,7 @@ def pde(x, y):
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
 
-    residuals = [causal_weight * res_u, causal_weight * res_v]
-    if lbfgs_periodic_loss_active:
-        periodic_value_error, periodic_derivative_error = periodic_boundary_losses(
-            x.device,
-            x.dtype,
-        )
-        residuals.extend([periodic_value_error, periodic_derivative_error])
-    return residuals
+    return [causal_weight * res_u, causal_weight * res_v]
 
 
 data = dde.data.TimePDE(
@@ -389,10 +303,9 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Adam keeps the cheap baseline PDE-only objective; L-BFGS adds periodic value/derivative losses.
-adam_loss_weights = [3.0, 3.0]
-lbfgs_loss_weights = [3.0, 3.0, 2.0, 2.0]
-model.compile("adam", lr=1e-3, loss_weights=adam_loss_weights)
+# Loss weights order corresponds to the PDE residual outputs.
+loss_weights =[3.0, 3.0]
+model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
@@ -406,12 +319,7 @@ try:
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
     configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
-    lbfgs_periodic_loss_active = True
-    print(
-        "[INFO] Enabling periodic value and derivative losses for L-BFGS: "
-        f"pairs={periodic_pair_count}, loss_weights={lbfgs_loss_weights}"
-    )
-    model.compile("L-BFGS", loss_weights=lbfgs_loss_weights)
+    model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
         callbacks=[time_callback_lbfgs],
