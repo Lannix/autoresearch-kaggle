@@ -151,6 +151,11 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
+- [ ] **HYP-5.4: Asymptotic Breather Stabilization Loss**
+  - *Idea:* Add a late-time physics prior that penalizes the temporal derivative of the local intensity `|psi|^2` so the solution is nudged toward a stable long-time breather attractor after the early transient has been learned.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
 
