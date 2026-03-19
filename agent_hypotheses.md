@@ -156,10 +156,10 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [DISCARD] | *Delta:* [+5.583e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, added a third PDE loss channel that computes `d|psi|^2 / dt` from the normalized-input graph, masks it by `time_frac^4` so the penalty is concentrated near the end of the trajectory, and trains with loss weights `[3.0, 3.0, 1.0]`. Kaggle T4 stayed stable and drove the new stabilization term to tiny values, but the extra regularizer raised peak VRAM to `2328.5 MB`, reduced total progress to `9375` steps, and final `val_mse` regressed from `5.666258e-02` to `5.722090e-02`, so this pointwise steady-state prior was not worth the extra training cost on the current budget.
 
-- [ ] **HYP-5.5: Spatial Parity Prior Around the Soliton Peak**
+- [x] **HYP-5.5: Spatial Parity Prior Around the Soliton Peak**
   - *Idea:* Add a symmetry prior that penalizes differences between `psi(theta_peak + dtheta, t)` and `psi(theta_peak - dtheta, t)` so the network does not waste capacity on asymmetric spatial noise.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.429e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, exposed the soliton-center `theta_peak`, mirrored each collocation point around that peak inside `pde(x, y)`, and added two cheap parity channels `0.5 * (u - u_mirror)` and `0.5 * (v - v_mirror)` with loss weights `[3.0, 3.0, 1.0, 1.0]`. Kaggle T4 stayed stable and drove the symmetry losses down to nearly zero, but the extra mirror forward pass raised peak VRAM to `2162.8 MB`, reduced total progress to `10054` steps, and final `val_mse` regressed from `5.666258e-02` to `5.700551e-02`, so the model already captures the dominant spatial parity well enough without paying for this explicit prior.
 
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
