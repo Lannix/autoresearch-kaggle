@@ -50,40 +50,6 @@ theta_origin = float(theta_samples[0])
 theta_peak = float(theta_samples[int(np.argmax(u0_samples**2 + v0_samples**2))])
 
 
-def compute_cw_background(zeta_value, f_value, u_samples_arr, v_samples_arr, edge_points=32):
-    edge_u = np.concatenate((u_samples_arr[:edge_points], u_samples_arr[-edge_points:]))
-    edge_v = np.concatenate((v_samples_arr[:edge_points], v_samples_arr[-edge_points:]))
-    edge_mean = np.mean(edge_u + 1j * edge_v)
-
-    coeffs = [1.0, -2.0 * zeta_value, 1.0 + zeta_value**2, -f_value**2]
-    roots = np.roots(coeffs)
-    candidates = []
-    for root in roots:
-        if abs(root.imag) < 1e-8 and root.real > 0.0:
-            intensity = float(root.real)
-            psi_cw = f_value / (1.0 + 1j * (zeta_value - intensity))
-            candidates.append((abs(psi_cw - edge_mean), intensity, psi_cw))
-
-    if not candidates:
-        raise RuntimeError("Failed to find a positive real CW background root.")
-
-    _, cw_intensity, cw_field = min(candidates, key=lambda item: item[0])
-    return (
-        float(cw_field.real),
-        float(cw_field.imag),
-        float(cw_intensity),
-        complex(edge_mean),
-    )
-
-
-cw_background_u, cw_background_v, cw_background_intensity, ic_edge_mean = compute_cw_background(
-    zeta,
-    f,
-    u0_samples,
-    v0_samples,
-)
-
-
 def build_real_fourier_coeffs(values):
     coeffs = np.fft.rfft(values) / values.size
     cos_coeffs = 2.0 * coeffs.real
@@ -227,12 +193,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(
-    "[INFO] CW background target: "
-    f"u={cw_background_u:.4f}, v={cw_background_v:.4f}, "
-    f"|psi|^2={cw_background_intensity:.4f}, "
-    f"edge_mean=({ic_edge_mean.real:.4f}, {ic_edge_mean.imag:.4f})"
-)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -277,8 +237,6 @@ def pde(x, y):
 
     du_dt = grad_u_norm[:, 1:2] * time_norm_scale
     dv_dt = grad_v_norm[:, 1:2] * time_norm_scale
-    du_dth = grad_u_norm[:, 0:1] * theta_norm_scale
-    dv_dth = grad_v_norm[:, 0:1] * theta_norm_scale
     du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
     dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
@@ -287,13 +245,8 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
-    flatness_weight = torch.exp(-torch.sqrt(du_dth.square() + dv_dth.square() + 1e-12))
-    cw_u = u.new_tensor(cw_background_u)
-    cw_v = v.new_tensor(cw_background_v)
-    background_u = flatness_weight * (u - cw_u)
-    background_v = flatness_weight * (v - cw_v)
 
-    return [causal_weight * res_u, causal_weight * res_v, background_u, background_v]
+    return [causal_weight * res_u, causal_weight * res_v]
 
 
 data = dde.data.TimePDE(
@@ -350,8 +303,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to [res_u, res_v, cw_u, cw_v].
-loss_weights =[3.0, 3.0, 0.5, 0.5]
+# Loss weights order corresponds to the PDE residual outputs.
+loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
