@@ -252,10 +252,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [KEEP] | *Delta:* [-1.789e-03 val_mse improvement]
   - *Notes:* Weighted both PDE residual components by `exp(-2 * t_norm)` while keeping the hard-periodic feature transform and IC losses unchanged. On Kaggle T4 this improved `val_mse` from `6.858262e-01` to `6.840374e-01`, kept peak VRAM essentially flat (`1470.7 MB`), and slightly shortened total training time, so emphasizing early-time consistency appears to help this LLE trajectory.
 
-- [ ] **HYP-7.5: PDE Residual Splitting**
+- [x] **HYP-7.5: PDE Residual Splitting**
   - *Idea:* In `pde(x, y)`, split the LLE residual into separate linear and Kerr channels for each field component so DeepXDE can weight those pieces independently during Adam and L-BFGS.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+6.048e-01 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the two original PDE residual channels with four separate outputs: linear and Kerr pieces for each of the `u` and `v` equations, weighted uniformly as `[1.5, 1.5, 1.5, 1.5]` to preserve the previous total PDE weight of `6.0`. Kaggle T4 stayed numerically stable and peak VRAM remained flat at `1981.3 MB`, but Adam plateaued at a much worse split-objective loss, L-BFGS could only reduce the four channels to a combined loss of about `1.36e-01`, and final `val_mse` collapsed from `5.666258e-02` to `6.614328e-01`, confirming that forcing the linear and nonlinear pieces toward zero separately changes the physics too aggressively for this DeepXDE setup.
 
 - [x] **HYP-7.6: Gradient-Enhanced Loss (gPINN)**
   - *Idea:* Compute the spatial derivative of the residual using `dde.grad.jacobian(res, x, j=1)` and return it as an extra element in the PDE return list to guide the optimizer in sharp gradient regions.
