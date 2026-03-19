@@ -133,6 +133,11 @@ Do not waste network capacity learning what is already known mathematically.
   - *Outcome:* [DISCARD] | *Delta:* [+1.311e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 baseline, added `6000` paired left/right boundary times and two explicit BC losses: one for `(u, v)` continuity and one for `(u_theta, v_theta)` continuity, with the derivative BC computed in normalized coordinates and rescaled by the exact `dtheta_n / dtheta` chain-rule factor to match the prior PyTorch formulation. The BC losses themselves converged to nearly zero, but Kaggle T4 still regressed from `5.809172e-02` to `5.940263e-02`, peak VRAM jumped sharply to `4333.1 MB`, and the heavier boundary-gradient bookkeeping cut the total optimizer progress down to `5064` steps, so the current hard-IC normalized model already appears periodic enough without the extra explicit PBC terms.
 
+- [ ] **HYP-4.8: Periodic Boundary Losses Only During L-BFGS**
+  - *Idea:* Reuse the best explicit periodic BC loss from HYP-4.7, but enable it only during the second-order L-BFGS phase so Adam keeps the cheap baseline objective while refinement enforces boundary consistency.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
