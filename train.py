@@ -83,9 +83,6 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-causal_exponent_adam = 2.0
-causal_exponent_lbfgs = 1.0
-current_causal_exponent = causal_exponent_adam
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -197,11 +194,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(
-    "[INFO] Causal weighting schedule: "
-    f"Adam exp(-{causal_exponent_adam:.1f} * t_frac), "
-    f"L-BFGS exp(-{causal_exponent_lbfgs:.1f} * t_frac)"
-)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -253,7 +245,7 @@ def pde(x, y):
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
-    causal_weight = torch.exp(-current_causal_exponent * time_frac)
+    causal_weight = torch.exp(-2.0 * time_frac)
 
     return [causal_weight * res_u, causal_weight * res_v]
 
@@ -320,11 +312,9 @@ time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    current_causal_exponent = causal_exponent_adam
     losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
-    current_causal_exponent = causal_exponent_lbfgs
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
 
