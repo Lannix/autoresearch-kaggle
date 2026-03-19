@@ -59,6 +59,11 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+8.022e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, inserted a fixed random Fourier encoding with `32` frequencies and Gaussian scale `sigma = 4.0` ahead of the existing five-layer `tanh` core, expanding the first learned layer from `2` inputs to `64` encoded features while leaving the exact Fourier hard-IC ansatz, normalized chain-rule PDE residual, and optimizer schedule unchanged. Kaggle T4 trained stably and L-BFGS still refined the model down to `10373` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.746475e-02`, peak VRAM rose to `2093.5 MB`, and parameter count increased to `74626`, so this fixed RFF front-end added capacity without beating the simpler normalized-coordinate baseline.
 
+- [ ] **HYP-1.9: Wider, Shallower Normalized Hard-IC MLP**
+  - *Idea:* Keep the normalized hard-IC architecture and beta-biased static collocation, but trade depth for width by replacing the five hidden `128`-unit `tanh` layers with a shallower wider stack such as `[256] * 3` to improve GPU throughput and second-order refinement under the same wall-clock budget.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
 
