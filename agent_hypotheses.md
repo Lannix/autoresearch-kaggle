@@ -282,6 +282,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+5.983e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, left the Adam phase at the existing `exp(-2.0 * t_frac)` causal weighting but reduced the L-BFGS phase to `exp(-1.0 * t_frac)` so the second-order refinement stage would be less biased toward the transient. Kaggle T4 remained stable, kept peak VRAM flat at `1981.3 MB`, and reached `10865` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.726087e-02`, so the stronger causal emphasis still appears beneficial even after the sampler already biases collocation points toward early times.
 
+- [ ] **HYP-7.11: Intensity-Scaled Residuals**
+  - *Idea:* Keep the current hard-IC and static-collocation baseline, but scale the PDE residual channels by `1 / (1 + |psi|^2)` using detached intensity so the optimizer does not over-focus on the breather peak at the expense of the background.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
 - [x] **HYP-8.1: Mixed Precision Training (FP16/FP32)**
