@@ -47,6 +47,7 @@ v0_samples = np.asarray(v0, dtype=np.float64).reshape(-1)
 theta_step = float(np.median(np.diff(theta_samples)))
 theta_period = float(theta_step * theta_samples.size)
 theta_origin = float(theta_samples[0])
+theta_peak = float(theta_samples[int(np.argmax(u0_samples**2 + v0_samples**2))])
 
 
 def build_real_fourier_coeffs(values):
@@ -119,8 +120,6 @@ def wrap_theta_to_domain(theta):
 
 
 def build_gaussian_biased_collocation_points(num_points):
-    peak_idx = int(np.argmax(u0_samples**2 + v0_samples**2))
-    theta_peak = float(theta_samples[peak_idx])
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
 
@@ -194,6 +193,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+print(f"[INFO] Spatial parity prior center: theta_peak={theta_peak:.4f}")
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -246,8 +246,22 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
+    theta_peak_tensor = x.new_tensor(theta_peak)
+    theta_min_tensor = x.new_tensor(th_min)
+    domain_width_tensor = x.new_tensor(th_max - th_min)
+    theta_mirror = torch.remainder(
+        2.0 * theta_peak_tensor - x[:, 0:1] - theta_min_tensor,
+        domain_width_tensor,
+    ) + theta_min_tensor
+    x_mirror = torch.cat((theta_mirror, x[:, 1:2]), dim=1)
+    y_mirror = net.forward_from_normalized(net.normalize_inputs(x_mirror))
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [
+        causal_weight * res_u,
+        causal_weight * res_v,
+        0.5 * (u - y_mirror[:, 0:1]),
+        0.5 * (v - y_mirror[:, 1:2]),
+    ]
 
 
 data = dde.data.TimePDE(
@@ -305,7 +319,7 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+loss_weights =[3.0, 3.0, 1.0, 1.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
