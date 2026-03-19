@@ -83,7 +83,6 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-core_hidden_layers = [256] * 3
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -163,7 +162,7 @@ def build_gaussian_biased_collocation_points(num_points):
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = dde.nn.FNN([2] + core_hidden_layers + [2], "tanh", "Glorot uniform")
+        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
         self.regularizer = self.core.regularizer
         self.last_x_norm = None
 
@@ -195,7 +194,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(f"[INFO] Core MLP hidden layers: {core_hidden_layers}")
 
 # ==========================================
 # 4. Physics / LLE Residual
