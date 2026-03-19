@@ -252,10 +252,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+2.794e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-4.6 normalized chain-rule baseline, kept Adam as the first-stage optimizer but replaced the static `1e-3` rate with a clamped cosine-style LambdaLR schedule that decayed from `1e-3` to `1e-4` by step `4000` and to `1e-5` by step `6000`, then held there until the time callback stopped Adam. Kaggle T4 stayed stable, pushed Adam all the way to `6000` steps, and handed L-BFGS a smoother loss surface that refined cleanly to `10999` total steps while keeping peak VRAM flat at `1981.3 MB`, but final `val_mse` still regressed slightly from `5.809172e-02` to `5.837114e-02`, so the scheduler improved optimization behavior without beating the current best validation result.
 
-- [ ] **HYP-7.10: Phase-Wise Causal Weight Annealing**
+- [x] **HYP-7.10: Phase-Wise Causal Weight Annealing**
   - *Idea:* Keep the stronger early-time causal weighting during Adam, but relax it during L-BFGS so the second-order phase can spend more capacity refining the full trajectory after the transient has been learned.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+5.983e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, left the Adam phase at the existing `exp(-2.0 * t_frac)` causal weighting but reduced the L-BFGS phase to `exp(-1.0 * t_frac)` so the second-order refinement stage would be less biased toward the transient. Kaggle T4 remained stable, kept peak VRAM flat at `1981.3 MB`, and reached `10865` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.726087e-02`, so the stronger causal emphasis still appears beneficial even after the sampler already biases collocation points toward early times.
 
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
