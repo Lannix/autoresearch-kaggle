@@ -18,7 +18,7 @@ from prepare import TIME_BUDGET, get_training_setup, evaluate_mse
 # ==========================================
 # 1. Initialization and Setup
 # ==========================================
-dde.config.set_default_float("float64")
+dde.config.set_default_float("float32")
 dde.config.set_random_seed(42)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,12 +59,12 @@ def build_real_fourier_coeffs(values):
     if values.size % 2 == 0:
         cos_coeffs[-1] = coeffs[-1].real
         sin_coeffs[-1] = 0.0
-    return cos_coeffs.astype(np.float64), sin_coeffs.astype(np.float64)
+    return cos_coeffs.astype(np.float32), sin_coeffs.astype(np.float32)
 
 
 u0_cos_coeffs, u0_sin_coeffs = build_real_fourier_coeffs(u0_samples)
 v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
-fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float64)
+fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
 
 # ==========================================
 # 2. DeepXDE Geometry and Domain
@@ -127,28 +127,28 @@ def build_gaussian_biased_collocation_points(num_points):
         loc=theta_peak,
         scale=gaussian_collocation_sigma,
         size=(gaussian_count, 1),
-    ).astype(np.float64)
-    theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float64)
+    ).astype(np.float32)
+    theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float32)
 
     theta_uniform = np.random.uniform(
         th_min,
         th_max,
         size=(uniform_count, 1),
-    ).astype(np.float64)
-    theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float64)
+    ).astype(np.float32)
+    theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
     np.random.shuffle(theta_samples_biased)
 
     time_samples_biased = np.random.beta(
         time_bias_beta_a,
         time_bias_beta_b,
         size=(num_points, 1),
-    ).astype(np.float64)
+    ).astype(np.float32)
     time_samples_biased = (
         t_min + (t_max - t_min) * time_samples_biased
-    ).astype(np.float64)
+    ).astype(np.float32)
     np.random.shuffle(time_samples_biased)
 
-    collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float64)
+    collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
         "[INFO] Static Gaussian-biased collocation: "
         f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
@@ -334,7 +334,7 @@ try:
     print(f"\n[TIME UP / CONVERGED] Mandatory evaluation at {total_training_time:.1f}s ...")
     
     net.eval()
-    val_mse = evaluate_mse(model_uv, device, dtype=torch.float64)
+    val_mse = evaluate_mse(model_uv, device, dtype=torch.float32)
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
     num_params = sum(p.numel() for p in net.parameters())
 
