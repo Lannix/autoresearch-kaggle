@@ -229,6 +229,11 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+1.107e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 baseline, preserved the `24000` Gaussian + `6000` uniform `theta` anchor mix and the winning `Beta(1.0, 3.0)` time bias, but narrowed the spatial Gaussian from `0.15 * (theta_max - theta_min)` to `0.10 * (theta_max - theta_min)` so more static anchors landed near the soliton core. Kaggle T4 stayed stable and peak VRAM remained flat at `1981.3 MB`, but Adam peaked later and less effectively, total progress fell from `11228` to `10775` steps, and final `val_mse` regressed from `5.666258e-02` to `5.776918e-02`, so the narrower spatial sampler over-concentrated on the center and degraded global coverage.
 
+- [ ] **HYP-6.13: Ten-Batch RAR Pool with 20% Static Anchors**
+  - *Idea:* Expand the effective collocation set to `10x` the baseline by maintaining a `300000`-point master pool split into `10` batches of `30000`, keep `20%` of the master pool fixed, and update the dynamic `80%` batch-by-batch toward the highest residual locations with a batched RAR callback.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
   - *Outcome:* [DISCARD] | *Delta:* [+2.465e-03 val_mse regression]

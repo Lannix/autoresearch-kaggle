@@ -84,6 +84,17 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
+anchor_batch_count = 10
+fixed_anchor_fraction = 0.20
+total_anchor_points = num_domain_points * anchor_batch_count
+fixed_anchor_points = int(round(total_anchor_points * fixed_anchor_fraction))
+fixed_anchor_points -= fixed_anchor_points % anchor_batch_count
+dynamic_anchor_points = total_anchor_points - fixed_anchor_points
+fixed_batch_size = fixed_anchor_points // anchor_batch_count
+dynamic_batch_size = dynamic_anchor_points // anchor_batch_count
+rar_period = 600
+rar_score_batch_size = 2048
+rar_candidate_points = dynamic_batch_size
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -119,7 +130,7 @@ def wrap_theta_to_domain(theta):
     return ((theta - th_min) % domain_width) + th_min
 
 
-def build_gaussian_biased_collocation_points(num_points):
+def build_gaussian_biased_collocation_points(num_points, announce=True, label="Static Gaussian-biased collocation"):
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
 
@@ -149,13 +160,27 @@ def build_gaussian_biased_collocation_points(num_points):
     np.random.shuffle(time_samples_biased)
 
     collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
-    print(
-        "[INFO] Static Gaussian-biased collocation: "
-        f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
-        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
-        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
-    )
+    if announce:
+        print(
+            f"[INFO] {label}: "
+            f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
+            f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
+            f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
+        )
     return collocation_points
+
+
+def split_anchor_batches(points, batch_size):
+    return [
+        np.array(chunk, dtype=np.float32, copy=True)
+        for chunk in np.split(points, points.shape[0] // batch_size)
+    ]
+
+
+def assemble_anchor_batch(batch_index, fixed_batches, dynamic_batches):
+    batch_points = np.vstack((fixed_batches[batch_index], dynamic_batches[batch_index])).astype(np.float32)
+    np.random.shuffle(batch_points)
+    return batch_points
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -192,7 +217,26 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
-custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+fixed_anchor_pool = build_gaussian_biased_collocation_points(
+    fixed_anchor_points,
+    announce=False,
+)
+dynamic_anchor_pool = build_gaussian_biased_collocation_points(
+    dynamic_anchor_points,
+    announce=False,
+)
+fixed_anchor_batches = split_anchor_batches(fixed_anchor_pool, fixed_batch_size)
+dynamic_anchor_batches = split_anchor_batches(dynamic_anchor_pool, dynamic_batch_size)
+custom_collocation_points = assemble_anchor_batch(0, fixed_anchor_batches, dynamic_anchor_batches)
+print(
+    "[INFO] Batched RAR collocation pool: "
+    f"total_points={total_anchor_points}, batches={anchor_batch_count}, "
+    f"active_batch={num_domain_points}, fixed={fixed_anchor_points} ({fixed_batch_size}/batch), "
+    f"dynamic={dynamic_anchor_points} ({dynamic_batch_size}/batch), "
+    f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
+    f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f}), "
+    f"rar_period={rar_period}, candidate_points={rar_candidate_points}"
+)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -293,6 +337,104 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
         lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
     )
 
+
+def residual_scores_for_points(points_np, batch_size):
+    original_requires_grad = [param.requires_grad for param in net.parameters()]
+    for param in net.parameters():
+        param.requires_grad_(False)
+
+    scores = []
+    try:
+        for start in range(0, points_np.shape[0], batch_size):
+            stop = start + batch_size
+            x_batch = torch.tensor(
+                points_np[start:stop],
+                device=device,
+                dtype=torch.float32,
+            ).requires_grad_(True)
+            residual_terms = pde(x_batch, net(x_batch))
+            score = torch.zeros(x_batch.shape[0], device=device, dtype=torch.float32)
+            for term in residual_terms[:2]:
+                score = score + term[:, 0].square()
+            scores.append(torch.sqrt(score + 1e-12).detach().cpu().numpy())
+            del x_batch, residual_terms, score
+        return np.concatenate(scores, axis=0)
+    finally:
+        for param, requires_grad in zip(net.parameters(), original_requires_grad):
+            param.requires_grad_(requires_grad)
+
+
+class BatchedRARRotator(dde.callbacks.Callback):
+    def __init__(
+        self,
+        period,
+        fixed_batches,
+        dynamic_batches,
+        candidate_points,
+        score_batch_size,
+    ):
+        super().__init__()
+        self.period = period
+        self.fixed_batches = fixed_batches
+        self.dynamic_batches = dynamic_batches
+        self.candidate_points = candidate_points
+        self.score_batch_size = score_batch_size
+        self.active_batch_index = 0
+
+    def on_epoch_end(self):
+        step = self.model.train_state.step
+        if step == 0 or step % self.period != 0:
+            return
+
+        current_dynamic = np.asarray(
+            self.dynamic_batches[self.active_batch_index],
+            dtype=np.float32,
+        )
+        candidate_points = build_gaussian_biased_collocation_points(
+            self.candidate_points,
+            announce=False,
+        )
+
+        current_scores = residual_scores_for_points(current_dynamic, self.score_batch_size)
+        candidate_scores = residual_scores_for_points(candidate_points, self.score_batch_size)
+
+        union_points = np.vstack((current_dynamic, candidate_points)).astype(np.float32)
+        union_scores = np.concatenate((current_scores, candidate_scores), axis=0)
+        top_indices = np.argpartition(union_scores, -dynamic_batch_size)[-dynamic_batch_size:]
+        updated_dynamic = union_points[top_indices].astype(np.float32)
+        np.random.shuffle(updated_dynamic)
+        self.dynamic_batches[self.active_batch_index] = updated_dynamic
+
+        updated_mean = float(union_scores[top_indices].mean())
+        current_mean = float(current_scores.mean())
+        candidate_mean = float(candidate_scores.mean())
+
+        self.active_batch_index = (self.active_batch_index + 1) % len(self.dynamic_batches)
+        next_batch = assemble_anchor_batch(
+            self.active_batch_index,
+            self.fixed_batches,
+            self.dynamic_batches,
+        )
+
+        self.model.data.replace_with_anchors(next_batch)
+        self.model.data.test_x = None
+        self.model.data.test_y = None
+        self.model.data.test_aux_vars = None
+        self.model.train_state.set_data_train(
+            self.model.data.train_x,
+            self.model.data.train_y,
+            self.model.data.train_aux_vars,
+        )
+        self.model.train_state.set_data_test(*self.model.data.test())
+
+        print(
+            f"[INFO] Batched RAR update at step {step}: "
+            f"updated_batch={self.active_batch_index - 1 if self.active_batch_index > 0 else len(self.dynamic_batches) - 1}, "
+            f"current_mean={current_mean:.3e}, candidate_mean={candidate_mean:.3e}, "
+            f"selected_mean={updated_mean:.3e}, next_batch={self.active_batch_index}"
+        )
+
+
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
     x = torch.cat((th_in, t_in), dim=1)
@@ -308,10 +450,21 @@ loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
+rar_callback = BatchedRARRotator(
+    rar_period,
+    fixed_anchor_batches,
+    dynamic_anchor_batches,
+    rar_candidate_points,
+    rar_score_batch_size,
+)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
+    losshistory, train_state = model.train(
+        iterations=100000,
+        callbacks=[time_callback_adam, rar_callback],
+        display_every=1000,
+    )
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
