@@ -83,7 +83,6 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-steady_state_penalty_power = 4.0
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -195,10 +194,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(
-    "[INFO] Late-time intensity stabilization: "
-    f"power={steady_state_penalty_power:.1f}, loss_weight=1.0"
-)
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -247,20 +242,12 @@ def pde(x, y):
     dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
     intensity = u.square() + v.square()
-    dI_dt = torch.autograd.grad(
-        intensity,
-        x_norm,
-        grad_outputs=torch.ones_like(intensity),
-        create_graph=True,
-        retain_graph=True,
-    )[0][:, 1:2] * time_norm_scale
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
-    late_time_weight = time_frac.pow(steady_state_penalty_power)
 
-    return [causal_weight * res_u, causal_weight * res_v, late_time_weight * dI_dt]
+    return [causal_weight * res_u, causal_weight * res_v]
 
 
 data = dde.data.TimePDE(
@@ -318,7 +305,7 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0, 1.0]
+loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
