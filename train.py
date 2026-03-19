@@ -83,7 +83,6 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-time_uniform_fraction = 0.20
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -124,8 +123,6 @@ def build_gaussian_biased_collocation_points(num_points):
     theta_peak = float(theta_samples[peak_idx])
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
-    time_uniform_count = int(round(num_points * time_uniform_fraction))
-    time_beta_count = num_points - time_uniform_count
 
     theta_gaussian = np.random.normal(
         loc=theta_peak,
@@ -142,20 +139,14 @@ def build_gaussian_biased_collocation_points(num_points):
     theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
     np.random.shuffle(theta_samples_biased)
 
-    time_samples_beta = np.random.beta(
+    time_samples_biased = np.random.beta(
         time_bias_beta_a,
         time_bias_beta_b,
-        size=(time_beta_count, 1),
+        size=(num_points, 1),
     ).astype(np.float32)
-    time_samples_beta = (
-        t_min + (t_max - t_min) * time_samples_beta
+    time_samples_biased = (
+        t_min + (t_max - t_min) * time_samples_biased
     ).astype(np.float32)
-    time_samples_uniform = np.random.uniform(
-        t_min,
-        t_max,
-        size=(time_uniform_count, 1),
-    ).astype(np.float32)
-    time_samples_biased = np.vstack((time_samples_beta, time_samples_uniform)).astype(np.float32)
     np.random.shuffle(time_samples_biased)
 
     collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
@@ -163,8 +154,7 @@ def build_gaussian_biased_collocation_points(num_points):
         "[INFO] Static Gaussian-biased collocation: "
         f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
         f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
-        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f}), "
-        f"time_mix={time_beta_count} beta + {time_uniform_count} uniform"
+        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
     )
     return collocation_points
 
