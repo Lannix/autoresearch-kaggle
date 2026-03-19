@@ -309,7 +309,7 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+1.274e-03 val_mse regression]
   - *Notes:* Enabled DeepXDE mixed precision and set PyTorch's default device to CUDA so the framework's internal autocast path actually targeted the T4. This sharply reduced peak VRAM from `1470.6 MB` to `908.0 MB` and let Adam reach about `25000` steps within the same wall-clock budget, but the final `val_mse` worsened from `6.828914e-01` to `6.841658e-01` and L-BFGS only made a tiny follow-up improvement, so the faster mixed-precision trajectory generalized worse than the float32 baseline.
 
-- [ ] **HYP-8.2: Float64 Precision for Hessians**
+- [x] **HYP-8.2: Float64 Precision for Hessians**
   - *Idea:* Call `dde.config.set_default_float("float64")`. Stiff PDEs suffer from FP32 rounding errors in `dde.grad.hessian`, which halts L-BFGS early. FP64 slows down iterations but can drastically improve mathematical precision and final val_mse.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.888e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, switched the DeepXDE default float to `float64`, promoted the Fourier coefficients and static anchors to float64, and evaluated the final field in `torch.float64` so the entire training and inference path used higher precision. Kaggle T4 stayed stable, but the cost was severe: peak VRAM rose to `3917.4 MB`, Adam only reached `1000` steps before the phase cutoff, total progress collapsed to `2438` steps, training stretched to `1838.0s`, and final `val_mse` regressed from `5.666258e-02` to `6.055001e-02`, so the extra Hessian precision was not worth the throughput loss under the current time budget.
