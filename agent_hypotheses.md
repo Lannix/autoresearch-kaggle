@@ -141,10 +141,10 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-5.2: Background (CW) Matching Penalty**
+- [x] **HYP-5.2: Background (CW) Matching Penalty**
   - *Idea:* Most of the spatial domain rests at a Continuous Wave (CW) background. Return an extra loss in `pde`: `(y - psi_cw) * torch.exp(-abs(dy_dtheta))` to force flat regions to match theoretical background quickly.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.314e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, solved the cubic CW steady-state equation from the known LLE parameters, selected the positive real root whose complex field matched the initial-condition edge mean, and added two extra loss channels `exp(-|psi_theta|) * (u - u_cw)` and `exp(-|psi_theta|) * (v - v_cw)` with mild weights `[0.5, 0.5]`. Kaggle T4 stayed stable and the chosen low-intensity CW target matched the initial edges exactly (`u=0.1635, v=-0.6600, |psi|^2=0.4624`), but the added background channels plateaued around `9.17e-03` and `1.78e-02`, peak VRAM stayed essentially flat at `1981.5 MB`, and final `val_mse` regressed from `5.666258e-02` to `5.797618e-02`, so this explicit CW-matching prior over-regularized the background without improving the overall solution.
 
 - [ ] **HYP-5.3: Global Energy (Intracavity Power) Stabilization**
   - *Idea:* Penalize the time-derivative of the integrated power $\int |\psi(t, \theta)|^2 d\theta$ at late times to force the system to settle into a stable attractor.
