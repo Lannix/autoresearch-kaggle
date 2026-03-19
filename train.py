@@ -245,13 +245,8 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
-    intensity_detached = u.detach().square() + v.detach().square()
-    residual_scale = 1.0 / (1.0 + intensity_detached)
 
-    return [
-        residual_scale * causal_weight * res_u,
-        residual_scale * causal_weight * res_v,
-    ]
+    return [causal_weight * res_u, causal_weight * res_v]
 
 
 data = dde.data.TimePDE(
