@@ -194,10 +194,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [KEEP] | *Delta:* [-1.341e-03 val_mse improvement]
   - *Notes:* Starting from the kept HYP-6.8 baseline, kept the `24000` Gaussian + `6000` uniform `theta` anchor mix centered on the initial-condition peak and changed only the time coordinates: instead of shuffled uniform `linspace` values, sampled `t` from `Beta(1.0, 3.0)` mapped onto `[t_min, t_max]` so the static anchor set emphasized the chaotic startup regime near `t = 0`. On Kaggle T4 this preserved the same `1981.3 MB` peak VRAM and nearly the same wall-clock budget, but L-BFGS refined to a stronger final solution and improved `val_mse` from `5.800351e-02` to `5.666258e-02`, making this a cheap win over both uniform-time static sampling and the earlier dynamic adaptive methods.
 
-- [ ] **HYP-6.10: Mixed Beta and Uniform Time Sampling**
+- [x] **HYP-6.10: Mixed Beta and Uniform Time Sampling**
   - *Idea:* Keep the spatial sampler from HYP-6.9, but mix mostly early-time beta-distributed `t` samples with a smaller uniform-time slice so the collocation set still covers the late-time breather regime explicitly.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+5.275e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 baseline, preserved the `24000` Gaussian + `6000` uniform `theta` anchor mix and the same `Beta(1.0, 3.0)` early-time bias, but reserved `20%` of the time coordinates for direct uniform sampling so the collocation set covered the late-time breather regime more explicitly. Kaggle T4 stayed stable, kept peak VRAM flat at `1981.3 MB`, and L-BFGS still refined to `10955` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.719010e-02`; Adam also peaked earlier around step `4000`, so the extra uniform tail coverage slightly diluted the stronger transient-focused sampler.
 
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.

@@ -34,3 +34,4 @@ ee447a5	6.023192e-02	5.49	DISCARD	HYP-7.6 gradient-enhanced PINN loss
 3b30526	5.746475e-02	2.04	DISCARD	HYP-1.8 random Fourier features
 3e78a50	6.338103e-02	1.94	DISCARD	HYP-7.3 self-adaptive PDE weights
 4480370	5.928781e-02	2.26	DISCARD	HYP-1.9 wider shallower MLP
+feca3a6	5.719010e-02	1.93	DISCARD	HYP-6.10 mixed beta and uniform time sampling
