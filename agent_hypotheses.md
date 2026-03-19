@@ -214,10 +214,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+5.275e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 baseline, preserved the `24000` Gaussian + `6000` uniform `theta` anchor mix and the same `Beta(1.0, 3.0)` early-time bias, but reserved `20%` of the time coordinates for direct uniform sampling so the collocation set covered the late-time breather regime more explicitly. Kaggle T4 stayed stable, kept peak VRAM flat at `1981.3 MB`, and L-BFGS still refined to `10955` total steps, but final `val_mse` regressed from `5.666258e-02` to `5.719010e-02`; Adam also peaked earlier around step `4000`, so the extra uniform tail coverage slightly diluted the stronger transient-focused sampler.
 
-- [ ] **HYP-6.11: Stronger Beta Time Bias on Static Collocation**
+- [x] **HYP-6.11: Stronger Beta Time Bias on Static Collocation**
   - *Idea:* Keep the Gaussian-biased static `theta` anchors from HYP-6.9, but increase the early-time emphasis further by changing the fixed time sampler from `Beta(1.0, 3.0)` to `Beta(1.0, 4.0)`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+4.553e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 baseline, kept the `24000` Gaussian + `6000` uniform `theta` anchor mix centered on the initial-condition peak and changed only the fixed time sampler from `Beta(1.0, 3.0)` to the more transient-heavy `Beta(1.0, 4.0)`. Kaggle T4 stayed stable, preserved the same `1981.3 MB` peak VRAM, and refined cleanly to `10957` total steps, but Adam peaked earlier around step `4000` and final `val_mse` regressed from `5.666258e-02` to `5.711783e-02`, so the stronger early-time concentration over-focused the startup transient and under-served the later trajectory compared with the kept `Beta(1.0, 3.0)` sampler.
 
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
