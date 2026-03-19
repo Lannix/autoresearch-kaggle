@@ -42,3 +42,4 @@ feca3a6	5.719010e-02	1.93	DISCARD	HYP-6.10 mixed beta and uniform time sampling
 4dbee50	5.711783e-02	1.93	DISCARD	HYP-6.11 stronger beta time bias
 32eb740	5.776918e-02	1.93	DISCARD	HYP-6.12 narrower Gaussian spatial bias
 83cc6f8	6.614328e-01	1.93	DISCARD	HYP-7.5 PDE residual splitting
+74ed4a0	6.123170e-02	1.94	DISCARD	HYP-7.11 intensity-scaled residuals
