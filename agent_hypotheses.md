@@ -219,10 +219,10 @@ Uniform sampling is inefficient because breathers occupy a tiny fraction of the 
   - *Outcome:* [DISCARD] | *Delta:* [+4.553e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 baseline, kept the `24000` Gaussian + `6000` uniform `theta` anchor mix centered on the initial-condition peak and changed only the fixed time sampler from `Beta(1.0, 3.0)` to the more transient-heavy `Beta(1.0, 4.0)`. Kaggle T4 stayed stable, preserved the same `1981.3 MB` peak VRAM, and refined cleanly to `10957` total steps, but Adam peaked earlier around step `4000` and final `val_mse` regressed from `5.666258e-02` to `5.711783e-02`, so the stronger early-time concentration over-focused the startup transient and under-served the later trajectory compared with the kept `Beta(1.0, 3.0)` sampler.
 
-- [ ] **HYP-6.12: Narrower Gaussian Spatial Bias on Static Collocation**
+- [x] **HYP-6.12: Narrower Gaussian Spatial Bias on Static Collocation**
   - *Idea:* Keep the winning `Beta(1.0, 3.0)` time sampler from HYP-6.9 and the `80/20` Gaussian plus uniform `theta` mix, but reduce the Gaussian width so more anchors concentrate near the soliton core around `theta_peak`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.107e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 baseline, preserved the `24000` Gaussian + `6000` uniform `theta` anchor mix and the winning `Beta(1.0, 3.0)` time bias, but narrowed the spatial Gaussian from `0.15 * (theta_max - theta_min)` to `0.10 * (theta_max - theta_min)` so more static anchors landed near the soliton core. Kaggle T4 stayed stable and peak VRAM remained flat at `1981.3 MB`, but Adam peaked later and less effectively, total progress fell from `11228` to `10775` steps, and final `val_mse` regressed from `5.666258e-02` to `5.776918e-02`, so the narrower spatial sampler over-concentrated on the center and degraded global coverage.
 
 - [x] **HYP-6.4: Quasi-Random Sequences (Sobol/Halton)**
   - *Idea:* Change `train_distribution` in `dde.data.TimePDE` to `"Sobol"` or `"Halton"` to reduce sampling "holes" in the 2D domain.
