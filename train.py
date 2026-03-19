@@ -241,19 +241,12 @@ def pde(x, y):
     dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
     intensity = u.square() + v.square()
-    linear_u = du_dt + u - zeta * v + 0.5 * dv_dth2 - f
-    nonlinear_u = intensity * v
-    linear_v = dv_dt + v + zeta * u - 0.5 * du_dth2
-    nonlinear_v = -intensity * u
+    res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
+    res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
 
-    return [
-        causal_weight * linear_u,
-        causal_weight * nonlinear_u,
-        causal_weight * linear_v,
-        causal_weight * nonlinear_v,
-    ]
+    return [causal_weight * res_u, causal_weight * res_v]
 
 
 data = dde.data.TimePDE(
@@ -310,8 +303,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to [linear_u, nonlinear_u, linear_v, nonlinear_v].
-loss_weights = [1.5, 1.5, 1.5, 1.5]
+# Loss weights order corresponds to the PDE residual outputs.
+loss_weights =[3.0, 3.0]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
