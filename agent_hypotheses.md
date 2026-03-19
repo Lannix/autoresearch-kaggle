@@ -151,10 +151,10 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-5.4: Asymptotic Breather Stabilization Loss**
+- [x] **HYP-5.4: Asymptotic Breather Stabilization Loss**
   - *Idea:* Add a late-time physics prior that penalizes the temporal derivative of the local intensity `|psi|^2` so the solution is nudged toward a stable long-time breather attractor after the early transient has been learned.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+5.583e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, added a third PDE loss channel that computes `d|psi|^2 / dt` from the normalized-input graph, masks it by `time_frac^4` so the penalty is concentrated near the end of the trajectory, and trains with loss weights `[3.0, 3.0, 1.0]`. Kaggle T4 stayed stable and drove the new stabilization term to tiny values, but the extra regularizer raised peak VRAM to `2328.5 MB`, reduced total progress to `9375` steps, and final `val_mse` regressed from `5.666258e-02` to `5.722090e-02`, so this pointwise steady-state prior was not worth the extra training cost on the current budget.
 
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
