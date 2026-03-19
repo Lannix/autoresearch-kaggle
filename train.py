@@ -81,7 +81,7 @@ theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
 num_domain_points = 30000
 gaussian_collocation_fraction = 0.80
-gaussian_collocation_sigma = 0.10 * (th_max - th_min)
+gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 
