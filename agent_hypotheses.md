@@ -72,10 +72,10 @@ Cutting-edge models from 2024-2026 to drastically reduce parameter count and inc
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-- [ ] **HYP-2.2: Separable PINNs (SPINN)**
+- [x] **HYP-2.2: Separable PINNs (SPINN)**
   - *Idea:* Implement a custom PyTorch network that processes $t$ and $\theta$ through independent sub-networks and combines them via tensor products. Can yield 10x-100x speedups in evaluation.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+4.004e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the dense 2D `tanh` core inside the normalized hard-IC wrapper with a separable architecture that sends normalized `theta` and `t` through independent three-layer `tanh` branches, reshapes both outputs into two `64`-rank bases, and combines them by per-output tensor products. Kaggle T4 stayed numerically stable, but the inductive bias was not a good fit here: Adam briefly reached a decent solution around step `3000` and then destabilized sharply by step `5000`, peak VRAM rose to `2477.0 MB`, parameter count increased to `99584`, total progress dropped to `9217` steps, and final `val_mse` regressed from `5.666258e-02` to `6.066724e-02`, so this simple separable core underperformed the original dense MLP on the current budget.
 
 - [ ] **HYP-2.3: Complex-Valued PINN (CVPINN)**
   - *Idea:* Implement a custom PyTorch network using `torch.complex64` weights. Map $(t, \theta)$ to complex domain natively, bypassing the $u, v$ split entirely.
