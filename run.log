@@ -11,98 +11,70 @@
 ==================================================
 KAGGLE RUN OUTPUT
 ==================================================
-[{"stream_name":"stderr","time":9.772600213,"data":"Using backend: pytorch\n"}
-,{"stream_name":"stderr","time":9.772643299,"data":"Other supported backends: tensorflow.compat.v1, tensorflow, jax, paddle.\n"}
-,{"stream_name":"stderr","time":9.772649258,"data":"paddle supports more examples now and is recommended.\n"}
-,{"stream_name":"stdout","time":12.905516362,"data":"Set the default float type to float32\n"}
-,{"stream_name":"stdout","time":12.908957027,"data":"[INFO] Using device: cuda\n"}
-,{"stream_name":"stdout","time":12.946227193,"data":"[INFO] GPU Name: Tesla T4\n"}
-,{"stream_name":"stdout","time":13.97306621,"data":"[INFO] Batched RAR collocation pool: total_points=300000, batches=10, active_batch=30000, fixed=60000 (6000/batch), dynamic=240000 (24000/batch), theta_peak=0.0000, sigma=1.8813, time_beta=(1.0, 3.0), rar_period=600, candidate_points=24000\n"}
-,{"stream_name":"stdout","time":13.973108813,"data":"[INFO] Starting training. Total budget: 1800s. Reserved for eval: 45s.\n"}
-,{"stream_name":"stdout","time":13.973194467999999,"data":"Compiling model...\n"}
-,{"stream_name":"stdout","time":18.403027814,"data":"'compile' took 4.429591 s\n"}
-,{"stream_name":"stdout","time":18.403054764,"data":"\n"}
-,{"stream_name":"stdout","time":18.403059699,"data":"\n"}
-,{"stream_name":"stdout","time":18.403063693,"data":"[INFO] Phase 1: Adam optimization\n"}
-,{"stream_name":"stdout","time":18.403067952,"data":"Training model...\n"}
-,{"stream_name":"stdout","time":18.403072256,"data":"\n"}
-,{"stream_name":"stdout","time":18.994447527,"data":"Step      Train loss              Test loss               Test metric\n"}
-,{"stream_name":"stdout","time":18.994481323,"data":"0         [4.80e+00, 3.68e+00]    [4.80e+00, 3.68e+00]    []  \n"}
-,{"stream_name":"stdout","time":109.390935016,"data":"[INFO] Batched RAR update at step 600: updated_batch=0, current_mean=1.205e-01, candidate_mean=1.280e-01, selected_mean=2.204e-01, next_batch=1\n"}
-,{"stream_name":"stdout","time":169.815486111,"data":"1000      [6.69e-02, 6.55e-02]    [6.69e-02, 6.55e-02]    []  \n"}
-,{"stream_name":"stdout","time":200.32979583,"data":"[INFO] Batched RAR update at step 1200: updated_batch=1, current_mean=7.407e-02, candidate_mean=7.552e-02, selected_mean=1.371e-01, next_batch=2\n"}
-,{"stream_name":"stdout","time":291.156347379,"data":"[INFO] Batched RAR update at step 1800: updated_batch=2, current_mean=4.061e-02, candidate_mean=4.019e-02, selected_mean=7.086e-02, next_batch=3\n"}
-,{"stream_name":"stdout","time":321.420323349,"data":"2000      [1.86e-02, 1.15e-02]    [1.86e-02, 1.15e-02]    []  \n"}
-,{"stream_name":"stdout","time":382.033747577,"data":"[INFO] Batched RAR update at step 2400: updated_batch=3, current_mean=3.455e-02, candidate_mean=3.476e-02, selected_mean=6.132e-02, next_batch=4\n"}
-,{"stream_name":"stdout","time":472.583207965,"data":"3000      [1.45e-02, 8.94e-03]    [1.45e-02, 8.94e-03]    []  \n"}
-,{"stream_name":"stdout","time":472.923823204,"data":"[INFO] Batched RAR update at step 3000: updated_batch=4, current_mean=3.552e-02, candidate_mean=3.597e-02, selected_mean=6.139e-02, next_batch=5\n"}
-,{"stream_name":"stdout","time":563.775910868,"data":"[INFO] Batched RAR update at step 3600: updated_batch=5, current_mean=2.893e-02, candidate_mean=2.929e-02, selected_mean=5.215e-02, next_batch=6\n"}
-,{"stream_name":"stdout","time":624.133857978,"data":"4000      [1.13e-02, 8.13e-03]    [1.13e-02, 8.13e-03]    []  \n"}
-,{"stream_name":"stdout","time":654.625926881,"data":"[INFO] Batched RAR update at step 4200: updated_batch=6, current_mean=2.636e-02, candidate_mean=2.646e-02, selected_mean=4.770e-02, next_batch=7\n"}
-,{"stream_name":"stdout","time":745.481083779,"data":"[INFO] Batched RAR update at step 4800: updated_batch=7, current_mean=2.395e-02, candidate_mean=2.483e-02, selected_mean=4.471e-02, next_batch=8\n"}
-,{"stream_name":"stdout","time":775.744426985,"data":"5000      [9.34e-03, 7.31e-03]    [9.34e-03, 7.31e-03]    []  \n"}
-,{"stream_name":"stdout","time":836.386321516,"data":"[INFO] Batched RAR update at step 5400: updated_batch=8, current_mean=3.502e-02, candidate_mean=3.574e-02, selected_mean=5.779e-02, next_batch=9\n"}
-,{"stream_name":"stdout","time":926.908929227,"data":"6000      [9.75e-03, 8.12e-03]    [9.75e-03, 8.12e-03]    []  \n"}
-,{"stream_name":"stdout","time":927.252013918,"data":"[INFO] Batched RAR update at step 6000: updated_batch=9, current_mean=2.888e-02, candidate_mean=2.973e-02, selected_mean=5.106e-02, next_batch=0\n"}
-,{"stream_name":"stdout","time":1018.041964115,"data":"[INFO] Batched RAR update at step 6600: updated_batch=0, current_mean=9.510e-02, candidate_mean=7.749e-02, selected_mean=1.503e-01, next_batch=1\n"}
-,{"stream_name":"stdout","time":1071.40413738,"data":"\n"}
-,{"stream_name":"stdout","time":1071.404181608,"data":"Best model at step 5000:\n"}
-,{"stream_name":"stdout","time":1071.404187733,"data":"  train loss: 1.66e-02\n"}
-,{"stream_name":"stdout","time":1071.404192177,"data":"  test loss: 1.66e-02\n"}
-,{"stream_name":"stdout","time":1071.404196542,"data":"  test metric: []\n"}
-,{"stream_name":"stdout","time":1071.404201523,"data":"\n"}
-,{"stream_name":"stdout","time":1071.404206712,"data":"'train' took 1053.001222 s\n"}
-,{"stream_name":"stdout","time":1071.404211608,"data":"\n"}
-,{"stream_name":"stdout","time":1071.404216742,"data":"\n"}
-,{"stream_name":"stdout","time":1071.404221122,"data":"[INFO] Phase 2: L-BFGS optimization\n"}
-,{"stream_name":"stdout","time":1071.404225525,"data":"Compiling model...\n"}
-,{"stream_name":"stdout","time":1071.404429375,"data":"'compile' took 0.000305 s\n"}
-,{"stream_name":"stdout","time":1071.404439278,"data":"\n"}
-,{"stream_name":"stdout","time":1071.404443705,"data":"Training model...\n"}
-,{"stream_name":"stdout","time":1071.404448085,"data":"\n"}
-,{"stream_name":"stdout","time":1071.514073178,"data":"Step      Train loss              Test loss               Test metric\n"}
-,{"stream_name":"stdout","time":1071.514100131,"data":"6954      [3.05e-02, 2.25e-02]    [3.05e-02, 2.25e-02]    []  \n"}
-,{"stream_name":"stdout","time":1114.010178004,"data":"7204      [1.71e-02, 1.46e-02]    [1.71e-02, 1.46e-02]    []  \n"}
-,{"stream_name":"stdout","time":1156.81239032,"data":"7454      [1.23e-02, 1.04e-02]    [1.23e-02, 1.04e-02]    []  \n"}
-,{"stream_name":"stdout","time":1200.664795444,"data":"7704      [9.95e-03, 7.86e-03]    [9.95e-03, 7.86e-03]    []  \n"}
-,{"stream_name":"stdout","time":1243.774700724,"data":"7954      [7.40e-03, 6.46e-03]    [7.40e-03, 6.46e-03]    []  \n"}
-,{"stream_name":"stdout","time":1286.73355327,"data":"8204      [5.78e-03, 5.77e-03]    [5.78e-03, 5.77e-03]    []  \n"}
-,{"stream_name":"stdout","time":1329.248961614,"data":"8454      [5.18e-03, 4.80e-03]    [5.18e-03, 4.80e-03]    []  \n"}
-,{"stream_name":"stdout","time":1372.496274226,"data":"8704      [4.36e-03, 4.25e-03]    [4.36e-03, 4.25e-03]    []  \n"}
-,{"stream_name":"stdout","time":1417.440112245,"data":"8954      [3.90e-03, 3.76e-03]    [3.90e-03, 3.76e-03]    []  \n"}
-,{"stream_name":"stdout","time":1462.520666654,"data":"9204      [3.59e-03, 3.42e-03]    [3.59e-03, 3.42e-03]    []  \n"}
-,{"stream_name":"stdout","time":1507.158370345,"data":"9454      [3.29e-03, 3.12e-03]    [3.29e-03, 3.12e-03]    []  \n"}
-,{"stream_name":"stdout","time":1551.155310396,"data":"9704      [2.99e-03, 2.88e-03]    [2.99e-03, 2.88e-03]    []  \n"}
-,{"stream_name":"stdout","time":1595.326738931,"data":"9954      [2.72e-03, 2.73e-03]    [2.72e-03, 2.73e-03]    []  \n"}
-,{"stream_name":"stdout","time":1639.490792382,"data":"10204     [2.56e-03, 2.60e-03]    [2.56e-03, 2.60e-03]    []  \n"}
-,{"stream_name":"stdout","time":1682.900306972,"data":"10454     [2.48e-03, 2.41e-03]    [2.48e-03, 2.41e-03]    []  \n"}
-,{"stream_name":"stdout","time":1727.407105719,"data":"10704     [2.37e-03, 2.27e-03]    [2.37e-03, 2.27e-03]    []  \n"}
-,{"stream_name":"stdout","time":1772.50652904,"data":"10954     [2.26e-03, 2.18e-03]    [2.26e-03, 2.18e-03]    []  \n"}
-,{"stream_name":"stdout","time":1772.506582918,"data":"\n"}
-,{"stream_name":"stdout","time":1772.506589012,"data":"Best model at step 10954:\n"}
-,{"stream_name":"stdout","time":1772.506593938,"data":"  train loss: 4.44e-03\n"}
-,{"stream_name":"stdout","time":1772.506598604,"data":"  test loss: 4.44e-03\n"}
-,{"stream_name":"stdout","time":1772.506602821,"data":"  test metric: []\n"}
-,{"stream_name":"stdout","time":1772.506608045,"data":"\n"}
-,{"stream_name":"stdout","time":1772.506612554,"data":"'train' took 701.102078 s\n"}
-,{"stream_name":"stdout","time":1772.50661661,"data":"\n"}
-,{"stream_name":"stdout","time":1772.506620687,"data":"\n"}
-,{"stream_name":"stdout","time":1772.506624705,"data":"[TIME UP / CONVERGED] Mandatory evaluation at 1759.6s ...\n"}
-,{"stream_name":"stdout","time":1772.627610617,"data":"\n"}
-,{"stream_name":"stdout","time":1772.627642002,"data":"---\n"}
-,{"stream_name":"stdout","time":1772.627647517,"data":"val_mse:          5.689638e-02\n"}
-,{"stream_name":"stdout","time":1772.627652521,"data":"training_seconds: 1759.6\n"}
-,{"stream_name":"stdout","time":1772.627657018,"data":"peak_vram_mb:     1981.3\n"}
-,{"stream_name":"stdout","time":1772.627661996,"data":"num_steps:        10954\n"}
-,{"stream_name":"stdout","time":1772.627666411,"data":"num_params:       66690\n"}
-,{"stream_name":"stdout","time":1772.627670701,"data":"---\n"}
-,{"stream_name":"stderr","time":1776.158121385,"data":"/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
-,{"stream_name":"stderr","time":1776.158148976,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
-,{"stream_name":"stderr","time":1776.38649507,"data":"/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
-,{"stream_name":"stderr","time":1776.38651936,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
-,{"stream_name":"stderr","time":1776.929304178,"data":"/usr/local/lib/python3.12/dist-packages/traitlets/traitlets.py:2915: FutureWarning: --Exporter.preprocessors=[\"nbconvert.preprocessors.ExtractOutputPreprocessor\"] for containers is deprecated in traitlets 5.0. You can pass `--Exporter.preprocessors item` ... multiple times to add items to a list.\n"}
-,{"stream_name":"stderr","time":1776.929332975,"data":"  warn(\n"}
-,{"stream_name":"stderr","time":1776.958916735,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
-,{"stream_name":"stderr","time":1778.186062074,"data":"[NbConvertApp] Writing 384940 bytes to __results__.html\n"}
+[{"stream_name":"stderr","time":17.968950338,"data":"Using backend: pytorch\n"}
+,{"stream_name":"stderr","time":17.96903055,"data":"Other supported backends: tensorflow.compat.v1, tensorflow, jax, paddle.\n"}
+,{"stream_name":"stderr","time":17.969050795,"data":"paddle supports more examples now and is recommended.\n"}
+,{"stream_name":"stdout","time":24.562000642,"data":"Set the default float type to float64\n"}
+,{"stream_name":"stdout","time":24.569508895,"data":"[INFO] Using device: cuda\n"}
+,{"stream_name":"stdout","time":24.611234065,"data":"[INFO] GPU Name: Tesla T4\n"}
+,{"stream_name":"stdout","time":25.252313525,"data":"[INFO] Static Gaussian-biased collocation: 24000 Gaussian + 6000 uniform theta samples, theta_peak=0.0000, sigma=1.8813, time_beta=(1.0, 3.0)\n"}
+,{"stream_name":"stdout","time":25.252887532,"data":"[INFO] Starting training. Total budget: 1800s. Reserved for eval: 45s.\n"}
+,{"stream_name":"stdout","time":25.252902772,"data":"Compiling model...\n"}
+,{"stream_name":"stdout","time":31.982395467,"data":"'compile' took 6.729326 s\n"}
+,{"stream_name":"stdout","time":31.982451645,"data":"\n"}
+,{"stream_name":"stdout","time":31.982460673,"data":"\n"}
+,{"stream_name":"stdout","time":31.982465425,"data":"[INFO] Phase 1: Adam optimization\n"}
+,{"stream_name":"stdout","time":31.982470157,"data":"Training model...\n"}
+,{"stream_name":"stdout","time":31.982474755,"data":"\n"}
+,{"stream_name":"stdout","time":33.42199972,"data":"Step      Train loss              Test loss               Test metric\n"}
+,{"stream_name":"stdout","time":33.422043617,"data":"0         [3.77e+00, 2.98e+00]    [3.77e+00, 2.98e+00]    []  \n"}
+,{"stream_name":"stdout","time":763.628948887,"data":"1000      [6.96e-02, 6.46e-02]    [6.96e-02, 6.46e-02]    []  \n"}
+,{"stream_name":"stdout","time":1085.176264874,"data":"\n"}
+,{"stream_name":"stdout","time":1085.176355401,"data":"Best model at step 1000:\n"}
+,{"stream_name":"stdout","time":1085.176363178,"data":"  train loss: 1.34e-01\n"}
+,{"stream_name":"stdout","time":1085.176368674,"data":"  test loss: 1.34e-01\n"}
+,{"stream_name":"stdout","time":1085.176375375,"data":"  test metric: []\n"}
+,{"stream_name":"stdout","time":1085.176383748,"data":"\n"}
+,{"stream_name":"stdout","time":1085.176388778,"data":"'train' took 1053.193829 s\n"}
+,{"stream_name":"stdout","time":1085.176394616,"data":"\n"}
+,{"stream_name":"stdout","time":1085.176400263,"data":"\n"}
+,{"stream_name":"stdout","time":1085.176405668,"data":"[INFO] Phase 2: L-BFGS optimization\n"}
+,{"stream_name":"stdout","time":1085.176410312,"data":"Compiling model...\n"}
+,{"stream_name":"stdout","time":1085.176890657,"data":"'compile' took 0.000565 s\n"}
+,{"stream_name":"stdout","time":1085.176902772,"data":"\n"}
+,{"stream_name":"stdout","time":1085.176909601,"data":"Training model...\n"}
+,{"stream_name":"stdout","time":1085.176914524,"data":"\n"}
+,{"stream_name":"stdout","time":1085.700655994,"data":"Step      Train loss              Test loss               Test metric\n"}
+,{"stream_name":"stdout","time":1085.700701357,"data":"1438      [3.24e-02, 2.88e-02]    [3.24e-02, 2.88e-02]    []  \n"}
+,{"stream_name":"stdout","time":1278.913109585,"data":"1688      [1.18e-02, 9.87e-03]    [1.18e-02, 9.87e-03]    []  \n"}
+,{"stream_name":"stdout","time":1471.266589843,"data":"1938      [8.81e-03, 7.71e-03]    [8.81e-03, 7.71e-03]    []  \n"}
+,{"stream_name":"stdout","time":1670.911644032,"data":"2188      [8.02e-03, 6.51e-03]    [8.02e-03, 6.51e-03]    []  \n"}
+,{"stream_name":"stdout","time":1862.577688193,"data":"2438      [6.74e-03, 5.56e-03]    [6.74e-03, 5.56e-03]    []  \n"}
+,{"stream_name":"stdout","time":1862.577747421,"data":"\n"}
+,{"stream_name":"stdout","time":1862.577771508,"data":"Best model at step 2438:\n"}
+,{"stream_name":"stdout","time":1862.577774571,"data":"  train loss: 1.23e-02\n"}
+,{"stream_name":"stdout","time":1862.577776999,"data":"  test loss: 1.23e-02\n"}
+,{"stream_name":"stdout","time":1862.5777794,"data":"  test metric: []\n"}
+,{"stream_name":"stdout","time":1862.577781785,"data":"\n"}
+,{"stream_name":"stdout","time":1862.577784245,"data":"'train' took 777.400720 s\n"}
+,{"stream_name":"stdout","time":1862.577786654,"data":"\n"}
+,{"stream_name":"stdout","time":1862.577789145,"data":"\n"}
+,{"stream_name":"stdout","time":1862.577791483,"data":"[TIME UP / CONVERGED] Mandatory evaluation at 1838.0s ...\n"}
+,{"stream_name":"stdout","time":1863.264007479,"data":"\n"}
+,{"stream_name":"stdout","time":1863.264046092,"data":"---\n"}
+,{"stream_name":"stdout","time":1863.264052512,"data":"val_mse:          6.055001e-02\n"}
+,{"stream_name":"stdout","time":1863.264056386,"data":"training_seconds: 1838.0\n"}
+,{"stream_name":"stdout","time":1863.264060083,"data":"peak_vram_mb:     3917.4\n"}
+,{"stream_name":"stdout","time":1863.264063921,"data":"num_steps:        2438\n"}
+,{"stream_name":"stdout","time":1863.264069534,"data":"num_params:       66690\n"}
+,{"stream_name":"stdout","time":1863.264073141,"data":"---\n"}
+,{"stream_name":"stderr","time":1869.169968202,"data":"/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":1869.170003806,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":1869.63576236,"data":"/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":1869.635790972,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":1870.353059691,"data":"/usr/local/lib/python3.12/dist-packages/traitlets/traitlets.py:2915: FutureWarning: --Exporter.preprocessors=[\"nbconvert.preprocessors.ExtractOutputPreprocessor\"] for containers is deprecated in traitlets 5.0. You can pass `--Exporter.preprocessors item` ... multiple times to add items to a list.\n"}
+,{"stream_name":"stderr","time":1870.353100016,"data":"  warn(\n"}
+,{"stream_name":"stderr","time":1870.425569822,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":1872.316670405,"data":"[NbConvertApp] Writing 357330 bytes to __results__.html\n"}
 ]
 ==================================================
