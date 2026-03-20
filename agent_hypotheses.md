@@ -141,10 +141,10 @@ Do not waste network capacity learning what is already known mathematically.
 ## Category 5: Physics Priors & Augmented Losses (The Breather Physics)
 Guide the network using known asymptotic behaviors of LLE.
 
-- [ ] **HYP-5.1: Temporal Periodicity Penalty (Breather Cycle Loss)**
+- [x] **HYP-5.1: Temporal Periodicity Penalty (Breather Cycle Loss)**
   - *Idea:* Breathrs eventually oscillate with a stable period. Add a custom `OperatorBC` or append a term to the `pde` return list penalizing differences at late times: $\| \psi(t_{max}, \theta) - \psi(t_{max} - \Delta t, \theta) \|^2$.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.927e-05 val_mse regression]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, added a cheap late-time pair-consistency prior by evaluating the model on `2048` evenly spaced theta points at `t_max` and `t_max - 0.9990` and returning the per-field differences as two extra loss channels with weights `[0.5, 0.5]`. Kaggle T4 stayed stable, peak VRAM remained effectively flat at `1981.6 MB`, and the added late-time channels were driven almost to zero throughout both Adam and L-BFGS, but final `val_mse` still regressed by a hair from `5.666258e-02` to `5.668185e-02`, so the temporal cycle prior is promisingly close yet still not an improvement over the simpler baseline.
 
 - [x] **HYP-5.2: Background (CW) Matching Penalty**
   - *Idea:* Most of the spatial domain rests at a Continuous Wave (CW) background. Return an extra loss in `pde`: `(y - psi_cw) * torch.exp(-abs(dy_dtheta))` to force flat regions to match theoretical background quickly.

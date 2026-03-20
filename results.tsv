@@ -49,3 +49,4 @@ d3ff945	5.701195e-02	2.11	DISCARD	HYP-4.8 periodic loss only in LBFGS
 27ad652	5.689638e-02	1.93	DISCARD	HYP-6.13 ten-batch RAR pool
 49778d3	6.055001e-02	3.83	DISCARD	HYP-8.2 float64 precision
 9e96a2c	6.066724e-02	2.42	DISCARD	HYP-2.2 separable PINN core
+8601a7f	5.668185e-02	1.94	DISCARD	HYP-5.1 late-time periodicity prior
