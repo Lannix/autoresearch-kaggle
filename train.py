@@ -86,6 +86,7 @@ time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 msffn_sigmas = (1.0, 10.0)
 msffn_features_per_scale = 16
+causal_decay_epsilon = 3.0
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -300,6 +301,7 @@ print(
     f"time_points={power_stabilization_time_count}, "
     f"late_start_frac={power_stabilization_start_frac:.2f}"
 )
+print(f"[INFO] Causal weighting: exp(-{causal_decay_epsilon:.1f} * (t - t_min))")
 
 
 def global_power_stabilization_loss(device, dtype):
@@ -363,8 +365,8 @@ def pde(x, y):
     intensity = u.square() + v.square()
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
-    time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
-    causal_weight = torch.exp(-2.0 * time_frac)
+    time_since_start = torch.clamp(x[:, 1:2] - t_min, min=0.0)
+    causal_weight = torch.exp(-causal_decay_epsilon * time_since_start)
     power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
 
     return [causal_weight * res_u, causal_weight * res_v, power_stabilization]
