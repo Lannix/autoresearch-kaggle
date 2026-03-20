@@ -89,6 +89,9 @@ time_bias_beta_b = 3.0
 # 3. Neural Network Architecture
 # ==========================================
 ic_fourier_cache = {}
+late_periodicity_cache = {}
+late_periodicity_theta_count = 2048
+late_periodicity_dt = 0.05 * (t_max - t_min)
 
 
 def get_ic_fourier_tensors(device, dtype):
@@ -106,6 +109,36 @@ def get_ic_fourier_tensors(device, dtype):
             "t0": torch.tensor(t0, device=device, dtype=dtype),
         }
     return ic_fourier_cache[key]
+
+
+def build_late_periodicity_pairs(num_points):
+    theta_points = np.linspace(
+        th_min,
+        th_max,
+        num_points,
+        endpoint=False,
+        dtype=np.float32,
+    ).reshape(-1, 1)
+    late_t = np.full((num_points, 1), t_max, dtype=np.float32)
+    ref_t = np.full(
+        (num_points, 1),
+        max(t_min, t_max - late_periodicity_dt),
+        dtype=np.float32,
+    )
+    late_points = np.hstack((theta_points, late_t)).astype(np.float32)
+    ref_points = np.hstack((theta_points, ref_t)).astype(np.float32)
+    return late_points, ref_points
+
+
+def get_late_periodicity_tensors(device, dtype):
+    key = (device.type, device.index, str(dtype))
+    if key not in late_periodicity_cache:
+        late_points, ref_points = build_late_periodicity_pairs(late_periodicity_theta_count)
+        late_periodicity_cache[key] = {
+            "late": torch.as_tensor(late_points, device=device, dtype=dtype),
+            "ref": torch.as_tensor(ref_points, device=device, dtype=dtype),
+        }
+    return late_periodicity_cache[key]
 
 
 def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
@@ -193,6 +226,20 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+print(
+    "[INFO] Late-time periodicity prior: "
+    f"theta_points={late_periodicity_theta_count}, "
+    f"dt={late_periodicity_dt:.4f}"
+)
+
+
+def late_periodicity_losses(device, dtype):
+    periodicity_tensors = get_late_periodicity_tensors(device, dtype)
+    late_norm = net.normalize_inputs(periodicity_tensors["late"])
+    ref_norm = net.normalize_inputs(periodicity_tensors["ref"])
+    late_uv = net.forward_from_normalized(late_norm)
+    ref_uv = net.forward_from_normalized(ref_norm)
+    return late_uv[:, 0:1] - ref_uv[:, 0:1], late_uv[:, 1:2] - ref_uv[:, 1:2]
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -245,8 +292,9 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
+    late_period_u, late_period_v = late_periodicity_losses(x.device, x.dtype)
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [causal_weight * res_u, causal_weight * res_v, late_period_u, late_period_v]
 
 
 data = dde.data.TimePDE(
@@ -303,8 +351,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+# Loss weights order corresponds to [pde_u, pde_v, late_period_u, late_period_v].
+loss_weights =[3.0, 3.0, 0.5, 0.5]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
