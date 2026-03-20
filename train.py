@@ -84,8 +84,8 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
-msffn_sigmas = (0.5, 2.0, 8.0)
-msffn_features_per_scale = 12
+msffn_sigmas = (1.0, 10.0)
+msffn_features_per_scale = 16
 
 # ==========================================
 # 3. Neural Network Architecture
