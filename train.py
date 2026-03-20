@@ -80,10 +80,8 @@ time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
 theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
 num_domain_points = 30000
-spectral_theta_count = 256
-spectral_time_count = max(1, num_domain_points // spectral_theta_count)
-num_domain_points = spectral_theta_count * spectral_time_count
-spectral_theta_step = float((th_max - th_min) / spectral_theta_count)
+gaussian_collocation_fraction = 0.80
+gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 
@@ -92,7 +90,6 @@ time_bias_beta_b = 3.0
 # ==========================================
 ic_fourier_cache = {}
 power_stabilization_cache = {}
-spectral_derivative_cache = {}
 power_stabilization_theta_count = 512
 power_stabilization_time_count = 6
 power_stabilization_start_frac = 0.80
@@ -161,48 +158,48 @@ def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
 
 
-def build_spectral_collocation_points(time_count, theta_count):
-    theta_points = np.linspace(
+def wrap_theta_to_domain(theta):
+    domain_width = th_max - th_min
+    return ((theta - th_min) % domain_width) + th_min
+
+
+def build_gaussian_biased_collocation_points(num_points):
+    gaussian_count = int(round(num_points * gaussian_collocation_fraction))
+    uniform_count = num_points - gaussian_count
+
+    theta_gaussian = np.random.normal(
+        loc=theta_peak,
+        scale=gaussian_collocation_sigma,
+        size=(gaussian_count, 1),
+    ).astype(np.float32)
+    theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float32)
+
+    theta_uniform = np.random.uniform(
         th_min,
         th_max,
-        theta_count,
-        endpoint=False,
-        dtype=np.float32,
-    ).reshape(-1, 1)
-    time_points = np.random.beta(
+        size=(uniform_count, 1),
+    ).astype(np.float32)
+    theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
+    np.random.shuffle(theta_samples_biased)
+
+    time_samples_biased = np.random.beta(
         time_bias_beta_a,
         time_bias_beta_b,
-        size=(time_count, 1),
+        size=(num_points, 1),
     ).astype(np.float32)
-    time_points = np.sort(
-        t_min + (t_max - t_min) * time_points,
-        axis=0,
+    time_samples_biased = (
+        t_min + (t_max - t_min) * time_samples_biased
     ).astype(np.float32)
-    theta_grid = np.tile(theta_points[None, :, :], (time_count, 1, 1))
-    time_grid = np.tile(time_points[:, None, :], (1, theta_count, 1))
-    collocation_points = np.concatenate((theta_grid, time_grid), axis=2).reshape(-1, 2).astype(np.float32)
+    np.random.shuffle(time_samples_biased)
+
+    collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
-        "[INFO] Spectral collocation grid: "
-        f"time_count={time_count}, theta_count={theta_count}, "
-        f"theta_step={spectral_theta_step:.6f}, "
+        "[INFO] Static Gaussian-biased collocation: "
+        f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
+        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
         f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
     )
     return collocation_points
-
-
-def get_spectral_second_derivative_multiplier(device, dtype):
-    key = (device.type, device.index, str(dtype))
-    if key not in spectral_derivative_cache:
-        wavenumbers = 2.0 * math.pi * np.fft.fftfreq(
-            spectral_theta_count,
-            d=spectral_theta_step,
-        )
-        spectral_derivative_cache[key] = torch.as_tensor(
-            -(wavenumbers.astype(np.float32) ** 2),
-            device=device,
-            dtype=dtype,
-        ).view(1, -1)
-    return spectral_derivative_cache[key]
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -239,10 +236,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
-custom_collocation_points = build_spectral_collocation_points(
-    spectral_time_count,
-    spectral_theta_count,
-)
+custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
@@ -289,19 +283,25 @@ def pde(x, y):
         retain_graph=True,
     )[0]
 
+    du_dth2_norm = torch.autograd.grad(
+        grad_u_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_u_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+    dv_dth2_norm = torch.autograd.grad(
+        grad_v_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_v_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+
     du_dt = grad_u_norm[:, 1:2] * time_norm_scale
     dv_dt = grad_v_norm[:, 1:2] * time_norm_scale
-    spectral_multiplier = get_spectral_second_derivative_multiplier(x.device, x.dtype)
-    u_grid = u.view(spectral_time_count, spectral_theta_count)
-    v_grid = v.view(spectral_time_count, spectral_theta_count)
-    du_dth2 = torch.fft.ifft(
-        torch.fft.fft(u_grid, dim=1) * spectral_multiplier,
-        dim=1,
-    ).real.reshape(-1, 1)
-    dv_dth2 = torch.fft.ifft(
-        torch.fft.fft(v_grid, dim=1) * spectral_multiplier,
-        dim=1,
-    ).real.reshape(-1, 1)
+    du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
+    dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
     intensity = u.square() + v.square()
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
