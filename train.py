@@ -89,6 +89,9 @@ msffn_features_per_scale = 16
 breather_theta_harmonics = (1, 2, 3, 4, 5)
 breather_period_guess = 0.9990
 breather_time_harmonics = (1.0, 2.0)
+curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
+curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
+curriculum_min_stage_steps = 1000
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -98,6 +101,7 @@ power_stabilization_cache = {}
 power_stabilization_theta_count = 512
 power_stabilization_time_count = 6
 power_stabilization_start_frac = 0.80
+curriculum_time_upper = float(t_max)
 
 
 def get_ic_fourier_tensors(device, dtype):
@@ -117,7 +121,8 @@ def get_ic_fourier_tensors(device, dtype):
     return ic_fourier_cache[key]
 
 
-def build_power_stabilization_grid(theta_count, time_count):
+def build_power_stabilization_grid(theta_count, time_count, time_upper=None):
+    time_upper = float(t_max if time_upper is None else time_upper)
     theta_points = np.linspace(
         th_min,
         th_max,
@@ -126,8 +131,8 @@ def build_power_stabilization_grid(theta_count, time_count):
         dtype=np.float32,
     ).reshape(-1, 1)
     time_points = np.linspace(
-        t_min + power_stabilization_start_frac * (t_max - t_min),
-        t_max,
+        t_min + power_stabilization_start_frac * (time_upper - t_min),
+        time_upper,
         time_count,
         dtype=np.float32,
     ).reshape(-1, 1)
@@ -139,18 +144,20 @@ def build_power_stabilization_grid(theta_count, time_count):
     return points.astype(np.float32), pair_weights.astype(np.float32)
 
 
-def get_power_stabilization_tensors(device, dtype):
-    key = (device.type, device.index, str(dtype))
+def get_power_stabilization_tensors(device, dtype, time_upper=None):
+    time_upper = float(t_max if time_upper is None else time_upper)
+    key = (device.type, device.index, str(dtype), round(time_upper, 6))
     if key not in power_stabilization_cache:
         points, pair_weights = build_power_stabilization_grid(
             power_stabilization_theta_count,
             power_stabilization_time_count,
+            time_upper=time_upper,
         )
         power_stabilization_cache[key] = {
             "points": torch.as_tensor(points, device=device, dtype=dtype),
             "pair_weights": torch.as_tensor(pair_weights, device=device, dtype=dtype),
             "delta_t": torch.tensor(
-                (1.0 - power_stabilization_start_frac) * (t_max - t_min) / max(1, power_stabilization_time_count - 1),
+                (1.0 - power_stabilization_start_frac) * (time_upper - t_min) / max(1, power_stabilization_time_count - 1),
                 device=device,
                 dtype=dtype,
             ),
@@ -168,7 +175,8 @@ def wrap_theta_to_domain(theta):
     return ((theta - th_min) % domain_width) + th_min
 
 
-def build_gaussian_biased_collocation_points(num_points):
+def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_prefix="Static"):
+    time_upper = float(t_max if time_upper is None else time_upper)
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
 
@@ -193,16 +201,17 @@ def build_gaussian_biased_collocation_points(num_points):
         size=(num_points, 1),
     ).astype(np.float32)
     time_samples_biased = (
-        t_min + (t_max - t_min) * time_samples_biased
+        t_min + (time_upper - t_min) * time_samples_biased
     ).astype(np.float32)
     np.random.shuffle(time_samples_biased)
 
     collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
-        "[INFO] Static Gaussian-biased collocation: "
+        f"[INFO] {log_prefix} Gaussian-biased collocation: "
         f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
         f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
-        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
+        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f}), "
+        f"time_upper={time_upper:.4f}"
     )
     return collocation_points
 
@@ -321,7 +330,12 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
-custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+curriculum_time_upper = t_min + curriculum_stage_upper_fracs[0] * (t_max - t_min)
+custom_collocation_points = build_gaussian_biased_collocation_points(
+    num_domain_points,
+    time_upper=curriculum_time_upper,
+    log_prefix="Curriculum stage 1/4",
+)
 print(
     "[INFO] MsFFN-style core: "
     f"sigmas={msffn_sigmas}, "
@@ -340,7 +354,7 @@ print(
     f"late_start_frac={power_stabilization_start_frac:.2f}"
 )
 def global_power_stabilization_loss(device, dtype):
-    tensors = get_power_stabilization_tensors(device, dtype)
+    tensors = get_power_stabilization_tensors(device, dtype, time_upper=curriculum_time_upper)
     uv = net.forward_from_normalized(net.normalize_inputs(tensors["points"]))
     intensity = uv[:, 0:1].square() + uv[:, 1:2].square()
     power_by_time = intensity.view(
@@ -440,6 +454,66 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
             self.model.stop_training = True
 
 
+class TimeCurriculumScheduler(dde.callbacks.Callback):
+    def __init__(self, stage_upper_fracs, stage_loss_thresholds, min_stage_steps=1000):
+        super().__init__()
+        self.stage_upper_fracs = tuple(float(v) for v in stage_upper_fracs)
+        self.stage_loss_thresholds = tuple(float(v) for v in stage_loss_thresholds)
+        self.min_stage_steps = int(min_stage_steps)
+
+    def on_train_begin(self):
+        self.stage_index = 0
+        self.last_seen_logged_step = -1
+        self.stage_start_step = 0
+        self.apply_stage(self.stage_index)
+
+    def on_epoch_end(self):
+        if self.stage_index >= len(self.stage_upper_fracs) - 1:
+            return
+        if not self.model.losshistory.steps:
+            return
+
+        step = int(self.model.losshistory.steps[-1])
+        if step == self.last_seen_logged_step:
+            return
+        self.last_seen_logged_step = step
+
+        if step - self.stage_start_step < self.min_stage_steps:
+            return
+
+        loss_train = self.model.losshistory.loss_train[-1]
+        total_loss = float(np.sum(loss_train))
+        threshold = self.stage_loss_thresholds[self.stage_index]
+        if total_loss > threshold:
+            return
+
+        self.stage_index += 1
+        self.stage_start_step = step
+        self.apply_stage(self.stage_index)
+
+    def apply_stage(self, stage_index):
+        global curriculum_time_upper
+        stage_frac = self.stage_upper_fracs[stage_index]
+        curriculum_time_upper = t_min + stage_frac * (t_max - t_min)
+        new_anchors = build_gaussian_biased_collocation_points(
+            num_domain_points,
+            time_upper=curriculum_time_upper,
+            log_prefix=f"Curriculum stage {stage_index + 1}/{len(self.stage_upper_fracs)}",
+        )
+        self.model.data.replace_with_anchors(new_anchors)
+        self.model.data.test_x, self.model.data.test_y, self.model.data.test_aux_vars = None, None, None
+        self.model.train_state.set_data_test(*self.model.data.test())
+        print(
+            "[INFO] Curriculum expansion: "
+            f"stage={stage_index + 1}/{len(self.stage_upper_fracs)}, "
+            f"time_upper={curriculum_time_upper:.4f}"
+        )
+
+    def set_final_stage(self):
+        self.stage_index = len(self.stage_upper_fracs) - 1
+        self.apply_stage(self.stage_index)
+
+
 def configure_pytorch_lbfgs(total_iters, inner_iters):
     # DeepXDE caches PyTorch's per-step L-BFGS budget separately from maxiter.
     dde.optimizers.config.set_LBFGS_options(maxiter=total_iters)
@@ -463,17 +537,27 @@ def model_uv(t_in, th_in, need_x=False):
 
 # Loss weights order corresponds to [pde_u, pde_v, global_power_dt].
 loss_weights =[3.0, 3.0, 0.5]
+curriculum_callback = TimeCurriculumScheduler(
+    stage_upper_fracs=curriculum_stage_upper_fracs,
+    stage_loss_thresholds=curriculum_stage_loss_thresholds,
+    min_stage_steps=curriculum_min_stage_steps,
+)
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
+    losshistory, train_state = model.train(
+        iterations=100000,
+        callbacks=[time_callback_adam, curriculum_callback],
+        display_every=1000,
+    )
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
+    curriculum_callback.set_final_stage()
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
     configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
