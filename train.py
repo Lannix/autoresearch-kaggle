@@ -86,6 +86,9 @@ time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 msffn_sigmas = (1.0, 10.0)
 msffn_features_per_scale = 16
+breather_theta_harmonics = (1, 2, 3, 4, 5)
+breather_period_guess = 0.9990
+breather_time_harmonics = (1.0, 2.0)
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -217,12 +220,31 @@ class MultiScaleFourierCore(torch.nn.Module):
         super().__init__()
         self.sigmas = tuple(float(sigma) for sigma in sigmas)
         self.features_per_scale = int(features_per_scale)
+        self.theta_harmonics = tuple(int(mode) for mode in breather_theta_harmonics)
+        self.time_harmonics = tuple(float(mode) for mode in breather_time_harmonics)
 
         for idx, sigma in enumerate(self.sigmas):
             projection = torch.randn(self.features_per_scale, input_dim) * sigma
             self.register_buffer(f"projection_{idx}", projection)
 
-        encoded_dim = input_dim + 2 * self.features_per_scale * len(self.sigmas)
+        self.register_buffer(
+            "det_theta_modes",
+            torch.tensor(self.theta_harmonics, dtype=torch.float32).view(1, -1),
+        )
+        self.register_buffer(
+            "det_time_omegas",
+            torch.tensor(
+                [(2.0 * math.pi / breather_period_guess) * mode for mode in self.time_harmonics],
+                dtype=torch.float32,
+            ).view(1, -1),
+        )
+
+        encoded_dim = (
+            input_dim
+            + 2 * self.features_per_scale * len(self.sigmas)
+            + 2 * len(self.theta_harmonics)
+            + 2 * len(self.time_harmonics)
+        )
         layer_dims = [encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
         layers = []
         for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
@@ -245,6 +267,17 @@ class MultiScaleFourierCore(torch.nn.Module):
             angles = 2.0 * math.pi * (x @ projection.T)
             encoded.append(torch.sin(angles))
             encoded.append(torch.cos(angles))
+
+        theta = x[:, 0:1] / theta_norm_scale + theta_center
+        time_coord = x[:, 1:2] / time_norm_scale + time_center
+        theta_modes = self.det_theta_modes.to(device=x.device, dtype=x.dtype)
+        time_omegas = self.det_time_omegas.to(device=x.device, dtype=x.dtype)
+        theta_angles = 2.0 * math.pi * (theta - theta_origin) * theta_modes / theta_period
+        time_angles = (time_coord - t0) * time_omegas
+        encoded.append(torch.sin(theta_angles))
+        encoded.append(torch.cos(theta_angles))
+        encoded.append(torch.sin(time_angles))
+        encoded.append(torch.cos(time_angles))
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
@@ -293,6 +326,12 @@ print(
     "[INFO] MsFFN-style core: "
     f"sigmas={msffn_sigmas}, "
     f"features_per_scale={msffn_features_per_scale}"
+)
+print(
+    "[INFO] Breather-tuned Fourier features: "
+    f"theta_modes={breather_theta_harmonics}, "
+    f"time_period_guess={breather_period_guess:.4f}, "
+    f"time_harmonics={breather_time_harmonics}"
 )
 print(
     "[INFO] Global power prior: "
