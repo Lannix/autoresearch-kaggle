@@ -84,6 +84,8 @@ gaussian_collocation_fraction = 0.80
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
+msffn_sigmas = (0.5, 2.0, 8.0)
+msffn_features_per_scale = 12
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -253,8 +255,8 @@ class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
         self.core = MultiScaleFourierCore(
-            sigmas=(1.0, 10.0),
-            features_per_scale=16,
+            sigmas=msffn_sigmas,
+            features_per_scale=msffn_features_per_scale,
         )
         self.regularizer = None
         self.last_x_norm = None
@@ -287,7 +289,11 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
+print(
+    "[INFO] MsFFN-style core: "
+    f"sigmas={msffn_sigmas}, "
+    f"features_per_scale={msffn_features_per_scale}"
+)
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "

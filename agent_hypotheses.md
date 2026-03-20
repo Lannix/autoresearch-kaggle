@@ -64,6 +64,11 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+2.625e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the core `tanh` network `[128] * 5` with a shallower wider `[256, 256, 256]` stack while leaving the exact Fourier hard-IC ansatz, normalized chain-rule PDE residual, static collocation anchors, and optimizer schedule unchanged. Kaggle T4 did use more of the available VRAM (`2319.1 MB`) and doubled the parameter count to `132866`, but it did not improve throughput: Adam only reached `5000` steps before the time cap instead of `6000`, total progress fell to `9346` steps, and final `val_mse` regressed from `5.666258e-02` to `5.928781e-02`, so this width-for-depth trade was slower and less accurate on the current budget.
 
+- [ ] **HYP-1.10: Three-Scale MsFFN Feature Bank Search**
+  - *Idea:* Since HYP-1.2 was the strongest improvement so far, keep the same hard-IC MsFFN pipeline but retune the Fourier bank itself: use three smoother scales instead of two coarse scales so the network gets denser low/mid/high frequency coverage without materially increasing the parameter count.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
 
