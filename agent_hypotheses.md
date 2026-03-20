@@ -378,10 +378,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 ## Category 11: Breather-Specific Physics & Sampling
 *Breathers are localized in space but oscillate in time. Uniform sampling wastes 90% of compute on the flat CW (Continuous Wave) background.*
 
-- [ ] **HYP-11.1: Targeted Breather-Peak Sampling**
+- [x] **HYP-11.1: Targeted Breather-Peak Sampling**
   - *Idea:* We know from the Initial Condition that the breather peak is located at $\Theta \approx 0$ (or the center of the domain). Override DeepXDE's sampling to draw 70% of the collocation points strictly in a narrow spatial band around the peak, and only 30% in the background.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+4.606e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the winning `80%` Gaussian plus `20%` uniform `theta` sampler with a stricter targeted scheme: `70%` of collocation points drawn uniformly inside a periodic peak band of half-width `0.12 * (theta_max - theta_min)` around `theta_peak`, and the remaining `30%` sampled only from the complementary background, while preserving the kept `Beta(1.0, 3.0)` time bias and global-power prior. Kaggle T4 stayed stable, peak VRAM remained flat at `2104.2 MB`, and L-BFGS refined cleanly to `9994` steps, but final `val_mse` regressed from `4.465095e-02` to `4.511156e-02`, so the softer Gaussian sampler still provides the best center-versus-background balance.
 
 - [ ] **HYP-11.2: R3 Sampling (Retain-Resample-Release) Callback**
   - *Idea:* Implement the 2026 ICML standard R3 sampling. Create a custom callback that triggers every 5000 epochs: it evaluates the PDE residual on a dense grid, **Retains** the top 20% highest-error points, **Releases** (drops) the lowest-error points, and **Resamples** the rest randomly. Update `model.data.replace_points()`.
