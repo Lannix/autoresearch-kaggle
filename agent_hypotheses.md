@@ -151,10 +151,10 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [DISCARD] | *Delta:* [+1.314e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, solved the cubic CW steady-state equation from the known LLE parameters, selected the positive real root whose complex field matched the initial-condition edge mean, and added two extra loss channels `exp(-|psi_theta|) * (u - u_cw)` and `exp(-|psi_theta|) * (v - v_cw)` with mild weights `[0.5, 0.5]`. Kaggle T4 stayed stable and the chosen low-intensity CW target matched the initial edges exactly (`u=0.1635, v=-0.6600, |psi|^2=0.4624`), but the added background channels plateaued around `9.17e-03` and `1.78e-02`, peak VRAM stayed essentially flat at `1981.5 MB`, and final `val_mse` regressed from `5.666258e-02` to `5.797618e-02`, so this explicit CW-matching prior over-regularized the background without improving the overall solution.
 
-- [ ] **HYP-5.3: Global Energy (Intracavity Power) Stabilization**
+- [x] **HYP-5.3: Global Energy (Intracavity Power) Stabilization**
   - *Idea:* Penalize the time-derivative of the integrated power $\int |\psi(t, \theta)|^2 d\theta$ at late times to force the system to settle into a stable attractor.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [KEEP] | *Delta:* [-4.289e-05 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, added a cheap global-power stabilization channel that evaluates the model on a fixed late-time grid of `512` evenly spaced theta points across `6` times spanning the last `20%` of the trajectory, computes the integrated intracavity power by uniform quadrature, and penalizes finite-difference `dP/dt` with late-time weights and a mild loss weight of `0.5`. Kaggle T4 stayed stable, peak VRAM remained effectively flat at `1981.6 MB`, the extra power-loss channel was driven from `2.88e-03` at initialization down to roughly `1e-07`-`1e-06` during training, and final `val_mse` improved slightly from `5.666258e-02` to `5.661969e-02`, so this low-cost late-time global-energy prior is the new best-performing objective.
 
 - [x] **HYP-5.4: Asymptotic Breather Stabilization Loss**
   - *Idea:* Add a late-time physics prior that penalizes the temporal derivative of the local intensity `|psi|^2` so the solution is nudged toward a stable long-time breather attractor after the early transient has been learned.
