@@ -249,104 +249,12 @@ class MultiScaleFourierCore(torch.nn.Module):
         return self.network(self.encode(x))
 
 
-class MultiScaleFourierEncoder(torch.nn.Module):
-    def __init__(self, input_dim=2, sigmas=(1.0, 10.0), features_per_scale=16):
-        super().__init__()
-        self.sigmas = tuple(float(sigma) for sigma in sigmas)
-        self.features_per_scale = int(features_per_scale)
-        self.output_dim = input_dim + 2 * self.features_per_scale * len(self.sigmas)
-
-        for idx, sigma in enumerate(self.sigmas):
-            projection = torch.randn(self.features_per_scale, input_dim) * sigma
-            self.register_buffer(f"projection_{idx}", projection)
-
-    def forward(self, x):
-        encoded = [x]
-        for idx in range(len(self.sigmas)):
-            projection = getattr(self, f"projection_{idx}")
-            angles = 2.0 * math.pi * (x @ projection.T)
-            encoded.append(torch.sin(angles))
-            encoded.append(torch.cos(angles))
-        return torch.cat(encoded, dim=1)
-
-
-class BSplineKANLayer(torch.nn.Module):
-    def __init__(self, in_features, out_features, num_centers=8, grid_min=-1.0, grid_max=1.0):
-        super().__init__()
-        self.in_features = int(in_features)
-        self.out_features = int(out_features)
-        self.num_centers = int(num_centers)
-        centers = torch.linspace(grid_min, grid_max, self.num_centers, dtype=torch.float32)
-        spacing = (grid_max - grid_min) / max(1, self.num_centers - 1)
-        self.register_buffer("centers", centers.view(1, 1, -1))
-        self.register_buffer("spacing", torch.tensor(float(spacing), dtype=torch.float32))
-        self.base_weight = torch.nn.Parameter(torch.empty(self.out_features, self.in_features))
-        self.spline_weight = torch.nn.Parameter(
-            torch.empty(self.out_features, self.in_features, self.num_centers)
-        )
-        self.bias = torch.nn.Parameter(torch.zeros(self.out_features))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.base_weight)
-        torch.nn.init.normal_(self.spline_weight, mean=0.0, std=0.05)
-        torch.nn.init.zeros_(self.bias)
-
-    def spline_basis(self, x):
-        z = (x.unsqueeze(-1) - self.centers) / (self.spacing + 1e-12)
-        abs_z = z.abs()
-        inner = (2.0 / 3.0) - abs_z.square() + 0.5 * abs_z.pow(3)
-        outer = ((2.0 - abs_z).clamp(min=0.0).pow(3)) / 6.0
-        return torch.where(abs_z < 1.0, inner, torch.where(abs_z < 2.0, outer, torch.zeros_like(abs_z)))
-
-    def forward(self, x):
-        basis = self.spline_basis(x)
-        spline_part = torch.einsum("bic,oic->bo", basis, self.spline_weight)
-        base_part = x @ self.base_weight.T
-        return base_part + spline_part + self.bias
-
-
-class PIKANCore(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim=2,
-        hidden_dim=48,
-        num_hidden_layers=2,
-        output_dim=2,
-        sigmas=(1.0, 10.0),
-        features_per_scale=16,
-        num_centers=8,
-    ):
-        super().__init__()
-        self.encoder = MultiScaleFourierEncoder(
-            input_dim=input_dim,
-            sigmas=sigmas,
-            features_per_scale=features_per_scale,
-        )
-        dims = [self.encoder.output_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
-        self.layers = torch.nn.ModuleList(
-            [
-                BSplineKANLayer(dims[idx], dims[idx + 1], num_centers=num_centers)
-                for idx in range(len(dims) - 1)
-            ]
-        )
-
-    def forward(self, x):
-        x = self.encoder(x)
-        for layer in self.layers[:-1]:
-            x = torch.tanh(layer(x))
-        return self.layers[-1](x)
-
-
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = PIKANCore(
+        self.core = MultiScaleFourierCore(
             sigmas=(1.0, 10.0),
             features_per_scale=16,
-            hidden_dim=48,
-            num_hidden_layers=2,
-            num_centers=8,
         )
         self.regularizer = None
         self.last_x_norm = None
@@ -379,11 +287,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(
-    "[INFO] PIKAN core: "
-    "hidden_dim=48, num_hidden_layers=2, num_centers=8, "
-    "sigmas=(1.0, 10.0), features_per_scale=16"
-)
+print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
