@@ -131,21 +131,21 @@ def build_power_stabilization_grid(theta_count, time_count):
     theta_grid = np.tile(theta_points[None, :, :], (time_count, 1, 1))
     time_grid = np.tile(time_points[:, None, :], (1, theta_count, 1))
     points = np.concatenate((theta_grid, time_grid), axis=2).reshape(-1, 2)
-    pair_times = time_points[1:]
-    pair_weights = ((pair_times - t_min) / (t_max - t_min + 1e-12)) ** 4.0
-    return points.astype(np.float32), pair_weights.astype(np.float32)
+    curvature_times = time_points[1:-1]
+    curvature_weights = ((curvature_times - t_min) / (t_max - t_min + 1e-12)) ** 4.0
+    return points.astype(np.float32), curvature_weights.astype(np.float32)
 
 
 def get_power_stabilization_tensors(device, dtype):
     key = (device.type, device.index, str(dtype))
     if key not in power_stabilization_cache:
-        points, pair_weights = build_power_stabilization_grid(
+        points, curvature_weights = build_power_stabilization_grid(
             power_stabilization_theta_count,
             power_stabilization_time_count,
         )
         power_stabilization_cache[key] = {
             "points": torch.as_tensor(points, device=device, dtype=dtype),
-            "pair_weights": torch.as_tensor(pair_weights, device=device, dtype=dtype),
+            "curvature_weights": torch.as_tensor(curvature_weights, device=device, dtype=dtype),
             "delta_t": torch.tensor(
                 (1.0 - power_stabilization_start_frac) * (t_max - t_min) / max(1, power_stabilization_time_count - 1),
                 device=device,
@@ -295,7 +295,7 @@ print(
     f"features_per_scale={msffn_features_per_scale}"
 )
 print(
-    "[INFO] Global power prior: "
+    "[INFO] Global power curvature prior: "
     f"theta_points={power_stabilization_theta_count}, "
     f"time_points={power_stabilization_time_count}, "
     f"late_start_frac={power_stabilization_start_frac:.2f}"
@@ -311,8 +311,12 @@ def global_power_stabilization_loss(device, dtype):
         power_stabilization_theta_count,
         1,
     ).mean(dim=1) * theta_period
-    power_dt = (power_by_time[1:] - power_by_time[:-1]) / (tensors["delta_t"] + 1e-12)
-    return tensors["pair_weights"] * power_dt
+    power_dt2 = (
+        power_by_time[2:]
+        - 2.0 * power_by_time[1:-1]
+        + power_by_time[:-2]
+    ) / ((tensors["delta_t"] + 1e-12) ** 2)
+    return tensors["curvature_weights"] * power_dt2
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -424,8 +428,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to [pde_u, pde_v, global_power_dt].
-loss_weights =[3.0, 3.0, 0.5]
+# Loss weights order corresponds to [pde_u, pde_v, global_power_dt2].
+loss_weights =[3.0, 3.0, 0.1]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)

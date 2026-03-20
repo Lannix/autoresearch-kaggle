@@ -181,6 +181,11 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [DISCARD] | *Delta:* [+3.584e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, added two late-time cycle-consistency channels on a fixed grid of `2048` theta points comparing `psi(t_max, theta)` against `psi(t_max - 0.9990, theta)` with weights `[0.5, 0.5]`, while preserving the existing global-power stabilization channel and all other training settings. Kaggle T4 stayed stable, peak VRAM remained effectively flat at `2104.3 MB`, and the added cycle losses were driven from about `1e-1` down to `1e-6`, but final `val_mse` still regressed slightly from `4.465095e-02` to `4.500937e-02`, so this late-time periodic hint remains promisingly close yet still does not beat the simpler MsFFN baseline.
 
+- [ ] **HYP-5.8: Global Power Curvature Penalty (Soft Attractor)**
+  - *Idea:* Replace the current first-difference late-time global-power prior with a softer attractor penalty on the second time derivative of the integrated intracavity power, so the model is nudged toward a stable late-time breather without directly forcing zero slope too early.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
 
