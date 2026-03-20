@@ -85,10 +85,10 @@ Cutting-edge models from 2024-2026 to drastically reduce parameter count and inc
 ## Category 3: Spectral Methods & Fourier Domain
 Leveraging the periodic, frequency-rich nature of the Lugiato-Lefever Equation.
 
-- [ ] **HYP-3.1: Spectral-Informed PINN (FFT for Spatial Derivatives)**
+- [x] **HYP-3.1: Spectral-Informed PINN (FFT for Spatial Derivatives)**
   - *Idea:* Instead of `dde.grad.hessian`, use `torch.fft.fft` and `torch.fft.ifft` inside the `pde(x, y)` function to compute $\partial^2 \psi / \partial \theta^2$. *Requires a strictly uniform grid for collocation points.*
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.834e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-5.3 global-power baseline, replaced the Gaussian-biased theta anchors with a time-biased tensor-product grid of `117` sampled times by `256` uniformly spaced theta points and computed the spatial second derivatives spectrally with `torch.fft.fft` and `torch.fft.ifft` instead of autograd Hessians. Kaggle T4 became much more throughput-efficient, cutting peak VRAM from `1981.6 MB` to `925.4 MB` and reaching `21049` total steps in `1480.0s`, but final `val_mse` still regressed from `5.661969e-02` to `5.945323e-02`, so the uniform spectral grid likely gave up too much peak-focused collocation quality despite the cheaper periodic derivative operator.
 
 - [ ] **HYP-3.2: Neural Spectral Methods (Fully Spectral Domain)**
   - *Idea:* Move the network output out of physical space. Parametrize $\psi$ as a Fourier series and train the network to predict time-dependent Fourier coefficients $c_k(t)$.
