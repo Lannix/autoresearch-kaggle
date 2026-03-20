@@ -202,25 +202,12 @@ def build_gaussian_biased_collocation_points(num_points):
     return collocation_points
 
 
-class ResidualBlock(torch.nn.Module):
-    def __init__(self, hidden_dim):
-        super().__init__()
-        self.linear1 = torch.nn.Linear(hidden_dim, hidden_dim)
-        self.linear2 = torch.nn.Linear(hidden_dim, hidden_dim)
-
-    def forward(self, x):
-        residual = x
-        x = torch.tanh(self.linear1(x))
-        x = self.linear2(x)
-        return torch.tanh(x + residual)
-
-
-class MultiScaleFourierResNetCore(torch.nn.Module):
+class MultiScaleFourierCore(torch.nn.Module):
     def __init__(
         self,
         input_dim=2,
         hidden_dim=128,
-        num_blocks=5,
+        num_hidden_layers=5,
         output_dim=2,
         sigmas=(1.0, 10.0),
         features_per_scale=16,
@@ -234,15 +221,17 @@ class MultiScaleFourierResNetCore(torch.nn.Module):
             self.register_buffer(f"projection_{idx}", projection)
 
         encoded_dim = input_dim + 2 * self.features_per_scale * len(self.sigmas)
-        self.input_layer = torch.nn.Linear(encoded_dim, hidden_dim)
-        self.blocks = torch.nn.ModuleList(
-            [ResidualBlock(hidden_dim) for _ in range(num_blocks)]
-        )
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
+        layer_dims = [encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        layers = []
+        for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
+            layers.append(torch.nn.Linear(in_dim, out_dim))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
+        self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
     def reset_parameters(self):
-        for module in self.modules():
+        for module in self.network:
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
@@ -257,19 +246,15 @@ class MultiScaleFourierResNetCore(torch.nn.Module):
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
-        x = torch.tanh(self.input_layer(self.encode(x)))
-        for block in self.blocks:
-            x = block(x)
-        return self.output_layer(x)
+        return self.network(self.encode(x))
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = MultiScaleFourierResNetCore(
+        self.core = MultiScaleFourierCore(
             sigmas=(1.0, 10.0),
             features_per_scale=16,
-            num_blocks=5,
         )
         self.regularizer = None
         self.last_x_norm = None
@@ -302,7 +287,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print("[INFO] MsFFN-ResNet core: sigmas=(1.0, 10.0), features_per_scale=16, num_blocks=5")
+print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
