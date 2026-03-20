@@ -249,10 +249,76 @@ class MultiScaleFourierCore(torch.nn.Module):
         return self.network(self.encode(x))
 
 
+class ComplexLinear(torch.nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.weight = torch.nn.Parameter(
+            torch.empty(out_features, in_features, dtype=torch.complex64)
+        )
+        self.bias = torch.nn.Parameter(
+            torch.empty(out_features, dtype=torch.complex64)
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        weight_real = torch.empty(self.weight.shape, dtype=torch.float32)
+        weight_imag = torch.empty(self.weight.shape, dtype=torch.float32)
+        torch.nn.init.xavier_uniform_(weight_real)
+        torch.nn.init.xavier_uniform_(weight_imag)
+        with torch.no_grad():
+            self.weight.copy_(torch.complex(weight_real, weight_imag) * 0.5)
+            self.bias.zero_()
+
+    def forward(self, x):
+        return x @ self.weight.T + self.bias
+
+
+class ComplexMultiScaleFourierCore(torch.nn.Module):
+    def __init__(
+        self,
+        input_dim=2,
+        hidden_dim=96,
+        num_hidden_layers=4,
+        sigmas=(1.0, 10.0),
+        features_per_scale=16,
+    ):
+        super().__init__()
+        self.sigmas = tuple(float(sigma) for sigma in sigmas)
+        self.features_per_scale = int(features_per_scale)
+
+        for idx, sigma in enumerate(self.sigmas):
+            projection = torch.randn(self.features_per_scale, input_dim) * sigma
+            self.register_buffer(f"projection_{idx}", projection)
+
+        encoded_dim = input_dim + 2 * self.features_per_scale * len(self.sigmas)
+        self.hidden_layers = torch.nn.ModuleList()
+        in_dim = encoded_dim
+        for _ in range(num_hidden_layers):
+            self.hidden_layers.append(ComplexLinear(in_dim, hidden_dim))
+            in_dim = hidden_dim
+        self.output_layer = ComplexLinear(hidden_dim, 1)
+
+    def encode(self, x):
+        encoded = [x]
+        for idx in range(len(self.sigmas)):
+            projection = getattr(self, f"projection_{idx}")
+            angles = 2.0 * math.pi * (x @ projection.T)
+            encoded.append(torch.sin(angles))
+            encoded.append(torch.cos(angles))
+        encoded_real = torch.cat(encoded, dim=1)
+        return torch.complex(encoded_real, torch.zeros_like(encoded_real))
+
+    def forward(self, x):
+        z = self.encode(x)
+        for layer in self.hidden_layers:
+            z = torch.tanh(layer(z))
+        return self.output_layer(z)
+
+
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = MultiScaleFourierCore(
+        self.core = ComplexMultiScaleFourierCore(
             sigmas=(1.0, 10.0),
             features_per_scale=16,
         )
@@ -272,13 +338,15 @@ class NormalizedChainRuleNet(dde.nn.NN):
         return theta, time_coord
 
     def forward_from_normalized(self, x_norm):
-        raw = self.core(x_norm)
+        raw_complex = self.core(x_norm)
         theta, time_coord = self.denormalize_inputs(x_norm)
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
+        psi_exact = torch.complex(u_exact, v_exact)
+        psi = psi_exact + growth * raw_complex
+        return torch.cat((psi.real, psi.imag), dim=1)
 
     def forward(self, inputs):
         self.last_x_norm = self.normalize_inputs(inputs)
@@ -287,7 +355,11 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
+print(
+    "[INFO] CVPINN core: "
+    "complex_weights=True, hidden_dim=96, num_hidden_layers=4, "
+    "sigmas=(1.0, 10.0), features_per_scale=16"
+)
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
@@ -354,9 +426,22 @@ def pde(x, y):
     du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
     dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
-    intensity = u.square() + v.square()
-    res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
-    res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
+    complex_dtype = torch.complex64 if x.dtype == torch.float32 else torch.complex128
+    psi = torch.complex(u, v)
+    psi_dt = torch.complex(du_dt, dv_dt)
+    psi_dth2 = torch.complex(du_dth2, dv_dth2)
+    linear_coeff = torch.tensor(complex(-1.0, -float(zeta)), device=x.device, dtype=complex_dtype)
+    nonlinear_coeff = torch.tensor(1j, device=x.device, dtype=complex_dtype)
+    dispersion_coeff = torch.tensor(0.5j, device=x.device, dtype=complex_dtype)
+    drive = torch.tensor(float(f), device=x.device, dtype=complex_dtype)
+    res_complex = psi_dt - (
+        linear_coeff * psi
+        + dispersion_coeff * psi_dth2
+        + nonlinear_coeff * psi.abs().square() * psi
+        + drive
+    )
+    res_u = res_complex.real
+    res_v = res_complex.imag
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
     power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
