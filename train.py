@@ -80,8 +80,8 @@ time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
 theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
 num_domain_points = 30000
-peak_band_collocation_fraction = 0.70
-peak_band_half_width = 0.12 * (th_max - th_min)
+gaussian_collocation_fraction = 0.80
+gaussian_collocation_sigma = 0.15 * (th_max - th_min)
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 msffn_sigmas = (1.0, 10.0)
@@ -166,29 +166,22 @@ def wrap_theta_to_domain(theta):
 
 
 def build_gaussian_biased_collocation_points(num_points):
-    peak_band_count = int(round(num_points * peak_band_collocation_fraction))
-    background_count = num_points - peak_band_count
+    gaussian_count = int(round(num_points * gaussian_collocation_fraction))
+    uniform_count = num_points - gaussian_count
 
-    theta_peak_band = theta_peak + np.random.uniform(
-        -peak_band_half_width,
-        peak_band_half_width,
-        size=(peak_band_count, 1),
+    theta_gaussian = np.random.normal(
+        loc=theta_peak,
+        scale=gaussian_collocation_sigma,
+        size=(gaussian_count, 1),
     ).astype(np.float32)
-    theta_peak_band = wrap_theta_to_domain(theta_peak_band).astype(np.float32)
+    theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float32)
 
-    background_offsets = np.random.uniform(
-        peak_band_half_width,
-        theta_half_span,
-        size=(background_count, 1),
+    theta_uniform = np.random.uniform(
+        th_min,
+        th_max,
+        size=(uniform_count, 1),
     ).astype(np.float32)
-    background_signs = np.where(
-        np.random.rand(background_count, 1) < 0.5,
-        -1.0,
-        1.0,
-    ).astype(np.float32)
-    theta_background = wrap_theta_to_domain(theta_peak + background_signs * background_offsets).astype(np.float32)
-
-    theta_samples_biased = np.vstack((theta_peak_band, theta_background)).astype(np.float32)
+    theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
     np.random.shuffle(theta_samples_biased)
 
     time_samples_biased = np.random.beta(
@@ -203,9 +196,9 @@ def build_gaussian_biased_collocation_points(num_points):
 
     collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
-        "[INFO] Targeted peak collocation: "
-        f"{peak_band_count} peak-band + {background_count} background theta samples, "
-        f"theta_peak={theta_peak:.4f}, band_half_width={peak_band_half_width:.4f}, "
+        "[INFO] Static Gaussian-biased collocation: "
+        f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
+        f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
         f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f})"
     )
     return collocation_points
