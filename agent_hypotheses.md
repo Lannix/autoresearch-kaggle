@@ -24,10 +24,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+4.874e-01 val_mse regression]
   - *Notes:* Replaced the kept baseline's `tanh` hidden activations with `sin` while leaving the hard-periodic input transform, causal PDE weighting, and tuned Adam plus L-BFGS schedule unchanged. The Kaggle T4 run stayed numerically stable, but validation collapsed from `6.828914e-01` to `1.170289e+00`, peak VRAM increased to `1790.4 MB`, and the optimizer never recovered from the noisier oscillatory representation, so this simple sine-activation swap is a poor fit for the current DeepXDE setup.
 
-- [ ] **HYP-1.2: Multi-scale Fourier Feature Network (MsFFN)**
+- [x] **HYP-1.2: Multi-scale Fourier Feature Network (MsFFN)**
   - *Idea:* Replace `dde.nn.FNN` with `dde.nn.MsFFN(layer_sizes, activation, initializer, sigmas=[1, 10])`. This maps inputs to a Fourier space natively in DeepXDE, heavily reducing spectral bias.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [KEEP] | *Delta:* [-1.197e-02 val_mse improvement]
+  - *Notes:* Starting from the kept HYP-5.3 global-power baseline, replaced the plain normalized-input `tanh` core with a custom MsFFN-style front end because this DeepXDE install does not expose `dde.nn.MsFFN`: two fixed Gaussian Fourier projection banks with scales `sigma in {1.0, 10.0}`, `16` frequencies per scale, raw normalized coordinates concatenated with `sin` and `cos` features, and then the same five-layer `tanh` MLP on top. Kaggle T4 stayed stable, peak VRAM rose modestly to `2104.2 MB`, the parameter count increased to `74882`, and both Adam and L-BFGS converged much more cleanly, improving `val_mse` from `5.661969e-02` to `4.465095e-02`, so this multi-scale Fourier encoding is the new best-performing architecture in the current DeepXDE pipeline.
 
 - [ ] **HYP-1.3: Deep Residual Network (ResNet)**
   - *Idea:* Use `dde.nn.ResNet` to safely increase network depth. Breather dynamics might require a deeper manifold than a standard MLP can provide within 30 mins.

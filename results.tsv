@@ -52,3 +52,4 @@ d3ff945	5.701195e-02	2.11	DISCARD	HYP-4.8 periodic loss only in LBFGS
 8601a7f	5.668185e-02	1.94	DISCARD	HYP-5.1 late-time periodicity prior
 ca83de2	5.661969e-02	1.94	KEEP	HYP-5.3 global power stabilization
 22090d8	5.945323e-02	0.90	DISCARD	HYP-3.1 FFT spatial derivatives
+dea32d7	4.465095e-02	2.05	KEEP	HYP-1.2 MsFFN-style core
