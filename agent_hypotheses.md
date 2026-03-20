@@ -317,10 +317,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+5.248e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, changed both DeepXDE compile calls from the default MSE loss to `mean absolute error` while leaving the hard-IC ansatz, PDE residual, static collocation anchors, and optimizer schedule unchanged. Kaggle T4 stayed fully stable, kept peak VRAM flat at `1981.3 MB`, and even reached a healthy `11269` total steps, but the loss plateaued at much larger absolute residual values and final `val_mse` regressed from `5.666258e-02` to `6.191092e-02`, so the nonsquared objective was more robust numerically without improving the actual learned solution.
 
-- [ ] **HYP-7.13: Stronger Physical-Time Causal Weighting**
+- [x] **HYP-7.13: Stronger Physical-Time Causal Weighting**
   - *Idea:* Keep the current MsFFN baseline and global-power prior, but replace the normalized-time causal factor with a stronger physical-time decay `exp(-3 * (t - t_min))` so the optimizer focuses more aggressively on the breather formation stage before refining the oscillatory tail.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+5.146e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the current normalized-time causal factor `exp(-2 * t_frac)` with a much stronger physical-time decay `exp(-3 * (t - t_min))` while leaving the exact hard-IC ansatz, Gaussian-beta collocation sampler, and global-power stabilization prior unchanged. Kaggle T4 stayed numerically stable, peak VRAM remained flat at `2104.2 MB`, and the weighted PDE losses became extremely small, but validation collapsed from `4.465095e-02` to `9.610675e-02`, showing that the stronger physical-time decay over-focused the early transient and effectively under-trained the later breather dynamics.
 
 ## Category 8: Compute Precision (The 30-Min T4 Limit)
 
