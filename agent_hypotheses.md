@@ -64,10 +64,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [DISCARD] | *Delta:* [+2.625e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the core `tanh` network `[128] * 5` with a shallower wider `[256, 256, 256]` stack while leaving the exact Fourier hard-IC ansatz, normalized chain-rule PDE residual, static collocation anchors, and optimizer schedule unchanged. Kaggle T4 did use more of the available VRAM (`2319.1 MB`) and doubled the parameter count to `132866`, but it did not improve throughput: Adam only reached `5000` steps before the time cap instead of `6000`, total progress fell to `9346` steps, and final `val_mse` regressed from `5.666258e-02` to `5.928781e-02`, so this width-for-depth trade was slower and less accurate on the current budget.
 
-- [ ] **HYP-1.10: Three-Scale MsFFN Feature Bank Search**
+- [x] **HYP-1.10: Three-Scale MsFFN Feature Bank Search**
   - *Idea:* Since HYP-1.2 was the strongest improvement so far, keep the same hard-IC MsFFN pipeline but retune the Fourier bank itself: use three smoother scales instead of two coarse scales so the network gets denser low/mid/high frequency coverage without materially increasing the parameter count.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+4.240e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the original two-scale Fourier bank `sigmas=(1.0, 10.0), features_per_scale=16` with a three-scale bank `sigmas=(0.5, 2.0, 8.0), features_per_scale=12` so the encoded feature budget stayed nearly flat while covering low, medium, and high frequencies more evenly. Kaggle T4 stayed numerically stable and parameter count only rose slightly to `75906`, but the new bank regressed `val_mse` from `4.465095e-02` to `4.889051e-02`, increased peak VRAM slightly to `2122.7 MB`, and showed noisier Adam behavior around steps `2000` and `5000`, so the broader three-scale encoding was less effective than the original stronger high-frequency two-scale MsFFN.
 
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
