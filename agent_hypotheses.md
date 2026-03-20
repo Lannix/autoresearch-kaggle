@@ -67,10 +67,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
 ## Category 2: Advanced SciML Architectures (PIKAN, Separable, Complex)
 Cutting-edge models from 2024-2026 to drastically reduce parameter count and increase speed.
 
-- [ ] **HYP-2.1: Physics-Informed Kolmogorov-Arnold Networks (PIKAN)**
+- [x] **HYP-2.1: Physics-Informed Kolmogorov-Arnold Networks (PIKAN)**
   - *Idea:* Implement a custom PyTorch KAN (learnable B-splines/wavelets on edges) and pass to DeepXDE. PIKANs achieve standard MLP accuracy with ~30x fewer parameters, making them incredibly fast and budget-friendly.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+3.187e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the dense `tanh` head with a custom spline PIKAN-style core: the same fixed multi-scale Fourier encoder feeds two hidden KAN layers of width `48`, where each edge uses a cubic B-spline basis over `8` centers plus a residual linear path, followed by the usual hard-IC ansatz, Gaussian-biased collocation, and global-power prior. Kaggle T4 stayed numerically stable, but the spline basis bookkeeping was far more expensive than expected: peak VRAM jumped to `9710.3 MB`, total progress fell to just `2215` steps, the run overran the intended time reserve to `1952.9s`, and final `val_mse` regressed from `4.465095e-02` to `7.651660e-02`, so this direct spline PIKAN implementation is not competitive with the simpler MsFFN head under the current training budget.
 
 - [x] **HYP-2.2: Separable PINNs (SPINN)**
   - *Idea:* Implement a custom PyTorch network that processes $t$ and $\theta$ through independent sub-networks and combines them via tensor products. Can yield 10x-100x speedups in evaluation.
