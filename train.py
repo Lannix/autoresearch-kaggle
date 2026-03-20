@@ -65,7 +65,6 @@ def build_real_fourier_coeffs(values):
 u0_cos_coeffs, u0_sin_coeffs = build_real_fourier_coeffs(u0_samples)
 v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
 fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
-spectral_mode_count = int(fourier_modes.size)
 
 # ==========================================
 # 2. DeepXDE Geometry and Domain
@@ -99,19 +98,15 @@ power_stabilization_start_frac = 0.80
 def get_ic_fourier_tensors(device, dtype):
     key = (device.type, device.index, str(dtype))
     if key not in ic_fourier_cache:
-        modes = torch.as_tensor(fourier_modes, device=device, dtype=dtype).view(1, -1)
-        theta_period_tensor = torch.tensor(theta_period, device=device, dtype=dtype)
-        two_pi_tensor = torch.tensor(2.0 * math.pi, device=device, dtype=dtype)
         ic_fourier_cache[key] = {
-            "modes": modes,
-            "u_cos_row": torch.as_tensor(u0_cos_coeffs, device=device, dtype=dtype).view(1, -1),
-            "u_sin_row": torch.as_tensor(u0_sin_coeffs, device=device, dtype=dtype).view(1, -1),
-            "v_cos_row": torch.as_tensor(v0_cos_coeffs, device=device, dtype=dtype).view(1, -1),
-            "v_sin_row": torch.as_tensor(v0_sin_coeffs, device=device, dtype=dtype).view(1, -1),
+            "modes": torch.as_tensor(fourier_modes, device=device, dtype=dtype).view(1, -1),
+            "u_cos": torch.as_tensor(u0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "u_sin": torch.as_tensor(u0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "v_cos": torch.as_tensor(v0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
+            "v_sin": torch.as_tensor(v0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
             "theta_origin": torch.tensor(theta_origin, device=device, dtype=dtype),
-            "theta_period": theta_period_tensor,
-            "two_pi": two_pi_tensor,
-            "k_sq": ((two_pi_tensor * modes / theta_period_tensor) ** 2),
+            "theta_period": torch.tensor(theta_period, device=device, dtype=dtype),
+            "two_pi": torch.tensor(2.0 * math.pi, device=device, dtype=dtype),
             "t0": torch.tensor(t0, device=device, dtype=dtype),
         }
     return ic_fourier_cache[key]
@@ -157,6 +152,12 @@ def get_power_stabilization_tensors(device, dtype):
         }
     return power_stabilization_cache[key]
 
+def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
+    theta_rel = theta - coeffs["theta_origin"]
+    angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
+    return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
+
+
 def wrap_theta_to_domain(theta):
     domain_width = th_max - th_min
     return ((theta - th_min) % domain_width) + th_min
@@ -201,13 +202,13 @@ def build_gaussian_biased_collocation_points(num_points):
     return collocation_points
 
 
-class TimeSpectralCoefficientCore(torch.nn.Module):
+class MultiScaleFourierCore(torch.nn.Module):
     def __init__(
         self,
-        input_dim=1,
+        input_dim=2,
         hidden_dim=128,
-        num_hidden_layers=3,
-        output_dim=4 * spectral_mode_count,
+        num_hidden_layers=5,
+        output_dim=2,
         sigmas=(1.0, 10.0),
         features_per_scale=16,
     ):
@@ -251,13 +252,12 @@ class TimeSpectralCoefficientCore(torch.nn.Module):
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = TimeSpectralCoefficientCore(
+        self.core = MultiScaleFourierCore(
             sigmas=(1.0, 10.0),
             features_per_scale=16,
         )
         self.regularizer = None
         self.last_x_norm = None
-        self.last_spectral_terms = None
 
     def normalize_inputs(self, x):
         theta = x[:, 0:1]
@@ -271,49 +271,14 @@ class NormalizedChainRuleNet(dde.nn.NN):
         time_coord = x_norm[:, 1:2] / time_norm_scale + time_center
         return theta, time_coord
 
-    def build_spectral_terms(self, x_norm):
+    def forward_from_normalized(self, x_norm):
+        raw = self.core(x_norm)
         theta, time_coord = self.denormalize_inputs(x_norm)
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
-
-        raw = self.core(x_norm[:, 1:2])
-        raw_chunks = torch.split(raw, spectral_mode_count, dim=1)
+        u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
+        v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-
-        u_cos = coeffs["u_cos_row"] + growth * raw_chunks[0]
-        u_sin = coeffs["u_sin_row"] + growth * raw_chunks[1]
-        v_cos = coeffs["v_cos_row"] + growth * raw_chunks[2]
-        v_sin = coeffs["v_sin_row"] + growth * raw_chunks[3]
-
-        theta_rel = theta - coeffs["theta_origin"]
-        angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
-        cos_basis = torch.cos(angles)
-        sin_basis = torch.sin(angles)
-
-        u = torch.sum(cos_basis * u_cos + sin_basis * u_sin, dim=1, keepdim=True)
-        v = torch.sum(cos_basis * v_cos + sin_basis * v_sin, dim=1, keepdim=True)
-        u_dth2 = -torch.sum(
-            coeffs["k_sq"] * (cos_basis * u_cos + sin_basis * u_sin),
-            dim=1,
-            keepdim=True,
-        )
-        v_dth2 = -torch.sum(
-            coeffs["k_sq"] * (cos_basis * v_cos + sin_basis * v_sin),
-            dim=1,
-            keepdim=True,
-        )
-
-        return {
-            "u": u,
-            "v": v,
-            "uv": torch.cat((u, v), dim=1),
-            "u_dth2": u_dth2,
-            "v_dth2": v_dth2,
-        }
-
-    def forward_from_normalized(self, x_norm):
-        spectral_terms = self.build_spectral_terms(x_norm)
-        self.last_spectral_terms = spectral_terms
-        return spectral_terms["uv"]
+        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
 
     def forward(self, inputs):
         self.last_x_norm = self.normalize_inputs(inputs)
@@ -322,11 +287,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
-print(
-    "[INFO] Neural spectral core: "
-    f"modes={spectral_mode_count}, "
-    "time_sigmas=(1.0, 10.0), features_per_scale=16"
-)
+print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
@@ -352,13 +313,11 @@ def global_power_stabilization_loss(device, dtype):
 # ==========================================
 def pde(x, y):
     x_norm = net.last_x_norm
-    spectral_terms = net.last_spectral_terms
-    if x_norm is None or x_norm.shape[0] != x.shape[0] or spectral_terms is None:
+    if x_norm is None or x_norm.shape[0] != x.shape[0]:
         x_norm = net.normalize_inputs(x)
-        spectral_terms = net.build_spectral_terms(x_norm)
-        y = spectral_terms["uv"]
+        y = net.forward_from_normalized(x_norm)
 
-    u, v = spectral_terms["u"], spectral_terms["v"]
+    u, v = y[:, 0:1], y[:, 1:2]
 
     grad_u_norm = torch.autograd.grad(
         u,
@@ -375,10 +334,25 @@ def pde(x, y):
         retain_graph=True,
     )[0]
 
+    du_dth2_norm = torch.autograd.grad(
+        grad_u_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_u_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+    dv_dth2_norm = torch.autograd.grad(
+        grad_v_norm[:, 0:1],
+        x_norm,
+        grad_outputs=torch.ones_like(grad_v_norm[:, 0:1]),
+        create_graph=True,
+        retain_graph=True,
+    )[0][:, 0:1]
+
     du_dt = grad_u_norm[:, 1:2] * time_norm_scale
     dv_dt = grad_v_norm[:, 1:2] * time_norm_scale
-    du_dth2 = spectral_terms["u_dth2"]
-    dv_dth2 = spectral_terms["v_dth2"]
+    du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
+    dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
     intensity = u.square() + v.square()
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
