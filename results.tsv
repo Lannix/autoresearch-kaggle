@@ -57,3 +57,4 @@ c5ec18c	5.256128e-02	3.60	DISCARD	HYP-1.3 MsFFN-ResNet core
 7115db1	1.434264e+00	1.55	DISCARD	HYP-3.2 neural spectral coefficients
 e233409	6.707246e-02	2.33	DISCARD	HYP-2.3 complex-valued PINN core
 df71011	7.651660e-02	9.48	DISCARD	HYP-2.1 spline PIKAN core
+57c9d82	4.500937e-02	2.06	DISCARD	HYP-5.7 late-time cycle consistency on MsFFN
