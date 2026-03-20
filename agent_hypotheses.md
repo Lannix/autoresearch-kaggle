@@ -90,10 +90,10 @@ Leveraging the periodic, frequency-rich nature of the Lugiato-Lefever Equation.
   - *Outcome:* [DISCARD] | *Delta:* [+2.834e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-5.3 global-power baseline, replaced the Gaussian-biased theta anchors with a time-biased tensor-product grid of `117` sampled times by `256` uniformly spaced theta points and computed the spatial second derivatives spectrally with `torch.fft.fft` and `torch.fft.ifft` instead of autograd Hessians. Kaggle T4 became much more throughput-efficient, cutting peak VRAM from `1981.6 MB` to `925.4 MB` and reaching `21049` total steps in `1480.0s`, but final `val_mse` still regressed from `5.661969e-02` to `5.945323e-02`, so the uniform spectral grid likely gave up too much peak-focused collocation quality despite the cheaper periodic derivative operator.
 
-- [ ] **HYP-3.2: Neural Spectral Methods (Fully Spectral Domain)**
+- [x] **HYP-3.2: Neural Spectral Methods (Fully Spectral Domain)**
   - *Idea:* Move the network output out of physical space. Parametrize $\psi$ as a Fourier series and train the network to predict time-dependent Fourier coefficients $c_k(t)$.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.390e+00 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the pointwise field head with a fully spectral parameterization that takes only normalized time as input, predicts residual Fourier coefficients for both real and imaginary parts across all `257` retained modes, reconstructs the field analytically in theta, and uses analytic Fourier `d^2 / dtheta^2` inside the PDE while keeping the hard-IC gate, Gaussian-biased collocation, and global-power prior. Kaggle T4 stayed numerically stable, used only `1590.7 MB` peak VRAM, and reached `15306` total steps, but the objective plateaued at very large PDE losses and final `val_mse` collapsed from `4.465095e-02` to `1.434264e+00`, so the unrestricted full-mode coefficient head was far too hard to optimize within the current time budget.
 
 ## Category 4: Hard Constraints & Boundary Enforcements
 Do not waste network capacity learning what is already known mathematically.
