@@ -29,10 +29,10 @@ Standard MLPs with Tanh suffer from spectral bias and gradient vanishing.
   - *Outcome:* [KEEP] | *Delta:* [-1.197e-02 val_mse improvement]
   - *Notes:* Starting from the kept HYP-5.3 global-power baseline, replaced the plain normalized-input `tanh` core with a custom MsFFN-style front end because this DeepXDE install does not expose `dde.nn.MsFFN`: two fixed Gaussian Fourier projection banks with scales `sigma in {1.0, 10.0}`, `16` frequencies per scale, raw normalized coordinates concatenated with `sin` and `cos` features, and then the same five-layer `tanh` MLP on top. Kaggle T4 stayed stable, peak VRAM rose modestly to `2104.2 MB`, the parameter count increased to `74882`, and both Adam and L-BFGS converged much more cleanly, improving `val_mse` from `5.661969e-02` to `4.465095e-02`, so this multi-scale Fourier encoding is the new best-performing architecture in the current DeepXDE pipeline.
 
-- [ ] **HYP-1.3: Deep Residual Network (ResNet)**
+- [x] **HYP-1.3: Deep Residual Network (ResNet)**
   - *Idea:* Use `dde.nn.ResNet` to safely increase network depth. Breather dynamics might require a deeper manifold than a standard MLP can provide within 30 mins.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+7.910e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the plain five-layer `tanh` head with a deeper custom residual MLP because this DeepXDE install does not expose `dde.nn.ResNet`: the same multi-scale Fourier encoder feeds a `128`-wide input layer, then `5` residual blocks with two linear layers each and tanh activations, followed by the output projection, while leaving the hard-IC ansatz, Gaussian-biased collocation, and global-power prior unchanged. Kaggle T4 stayed numerically stable, but the residual stack nearly doubled the parameter count to `173954`, raised peak VRAM sharply to `3683.2 MB`, cut total progress to `5955` steps, and regressed `val_mse` from `4.465095e-02` to `5.256128e-02`, so the heavier residual core was too expensive for the current 30-minute budget.
 
 - [x] **HYP-1.4: Modified MLP (Wang et al. 2021)**
   - *Idea:* Build a custom PyTorch module with temporal/spatial gating mechanisms and pass it to DeepXDE. Greatly improves gradient flow.
