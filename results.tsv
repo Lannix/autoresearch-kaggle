@@ -59,3 +59,4 @@ e233409	6.707246e-02	2.33	DISCARD	HYP-2.3 complex-valued PINN core
 df71011	7.651660e-02	9.48	DISCARD	HYP-2.1 spline PIKAN core
 57c9d82	4.500937e-02	2.06	DISCARD	HYP-5.7 late-time cycle consistency on MsFFN
 ee5118d	4.889051e-02	2.07	DISCARD	HYP-1.10 three-scale MsFFN feature bank
+39fb553	4.499337e-02	2.05	DISCARD	HYP-5.8 global power curvature penalty
