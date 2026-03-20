@@ -77,10 +77,10 @@ Cutting-edge models from 2024-2026 to drastically reduce parameter count and inc
   - *Outcome:* [DISCARD] | *Delta:* [+4.004e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, replaced the dense 2D `tanh` core inside the normalized hard-IC wrapper with a separable architecture that sends normalized `theta` and `t` through independent three-layer `tanh` branches, reshapes both outputs into two `64`-rank bases, and combines them by per-output tensor products. Kaggle T4 stayed numerically stable, but the inductive bias was not a good fit here: Adam briefly reached a decent solution around step `3000` and then destabilized sharply by step `5000`, peak VRAM rose to `2477.0 MB`, parameter count increased to `99584`, total progress dropped to `9217` steps, and final `val_mse` regressed from `5.666258e-02` to `6.066724e-02`, so this simple separable core underperformed the original dense MLP on the current budget.
 
-- [ ] **HYP-2.3: Complex-Valued PINN (CVPINN)**
+- [x] **HYP-2.3: Complex-Valued PINN (CVPINN)**
   - *Idea:* Implement a custom PyTorch network using `torch.complex64` weights. Map $(t, \theta)$ to complex domain natively, bypassing the $u, v$ split entirely.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.242e-02 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the real-valued pointwise head with a genuinely complex-valued core: fixed multi-scale Fourier features on normalized `(theta, t)` are cast into the complex domain, passed through `4` hidden complex linear layers with `96` channels and complex `tanh`, and the network outputs a single complex residual field that is added to the exact complex initial condition through the same hard temporal gate. The PDE was also rewritten in native complex form before splitting the residual back into real and imaginary channels for DeepXDE. Kaggle T4 stayed numerically stable and the model was parameter-efficient at only `34465` complex weights, but peak VRAM still rose to `2388.1 MB`, total progress dropped to `7631` steps, and final `val_mse` regressed from `4.465095e-02` to `6.707246e-02`, so the native complex parameterization did not beat the simpler real-valued MsFFN head under the current time budget.
 
 ## Category 3: Spectral Methods & Fourier Domain
 Leveraging the periodic, frequency-rich nature of the Lugiato-Lefever Equation.
