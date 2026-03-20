@@ -91,24 +91,6 @@ time_bias_beta_b = 3.0
 ic_fourier_cache = {}
 
 
-class SeparableCore(dde.nn.NN):
-    def __init__(self, rank=64, hidden_layers=3, hidden_width=128):
-        super().__init__()
-        branch_sizes = [1] + [hidden_width] * hidden_layers + [2 * rank]
-        self.rank = rank
-        self.out_dim = 2
-        self.theta_branch = dde.nn.FNN(branch_sizes, "tanh", "Glorot uniform")
-        self.time_branch = dde.nn.FNN(branch_sizes, "tanh", "Glorot uniform")
-        self.regularizer = self.theta_branch.regularizer
-
-    def forward(self, x_norm):
-        theta_norm = x_norm[:, 0:1]
-        time_norm = x_norm[:, 1:2]
-        theta_basis = self.theta_branch(theta_norm).view(-1, self.out_dim, self.rank)
-        time_basis = self.time_branch(time_norm).view(-1, self.out_dim, self.rank)
-        return (theta_basis * time_basis).sum(dim=2)
-
-
 def get_ic_fourier_tensors(device, dtype):
     key = (device.type, device.index, str(dtype))
     if key not in ic_fourier_cache:
@@ -179,7 +161,7 @@ def build_gaussian_biased_collocation_points(num_points):
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = SeparableCore(rank=64, hidden_layers=3, hidden_width=128)
+        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
         self.regularizer = self.core.regularizer
         self.last_x_norm = None
 
