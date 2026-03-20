@@ -338,3 +338,57 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Call `dde.config.set_default_float("float64")`. Stiff PDEs suffer from FP32 rounding errors in `dde.grad.hessian`, which halts L-BFGS early. FP64 slows down iterations but can drastically improve mathematical precision and final val_mse.
   - *Outcome:* [DISCARD] | *Delta:* [+3.888e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, switched the DeepXDE default float to `float64`, promoted the Fourier coefficients and static anchors to float64, and evaluated the final field in `torch.float64` so the entire training and inference path used higher precision. Kaggle T4 stayed stable, but the cost was severe: peak VRAM rose to `3917.4 MB`, Adam only reached `1000` steps before the phase cutoff, total progress collapsed to `2438` steps, training stretched to `1838.0s`, and final `val_mse` regressed from `5.666258e-02` to `6.055001e-02`, so the extra Hessian precision was not worth the throughput loss under the current time budget.
+
+## Category 9: 2026 Advanced Loss Balancing & Optimization
+*Based on recent SciML literature, static loss weights fail on stiff PDEs because the network gets trapped in local saddle points between the boundary conditions and the PDE residual.*
+
+- [ ] **HYP-9.1: ReLoBRaLo (Relative Loss Balancing with Random Lookback)**
+  - *Idea:* Implement a simplified version of ReLoBRaLo as a DeepXDE callback. At every $N$ epochs, dynamically adjust the loss weights ($w_{pde}, w_{ic}, w_{bc}$) based on the ratio of the current losses to the losses from a random previous epoch. This prevents the "gradient pathology" where the IC/BC losses dominate the highly non-linear breather PDE.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-9.2: Curriculum Learning (Time-Marching Expansion)**
+  - *Idea:* Breathers exhibit "propagation failure" because the network tries to learn the chaotic late-time oscillations before understanding the early-time formation. Write a callback that starts the training domain strictly at $t \in [t_0, t_0 + \Delta t]$ and gradually expands the upper time bound $t_{max}$ as the PDE residual drops below a threshold.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-9.3: Bregman Gradient Descent-Ascent (BGDA) Proxy**
+  - *Idea:* To simulate the 2026 BGDA saddle-point optimization, alternate the optimization step: train the network parameters to *minimize* the loss for 5 steps, then train the loss weights ($w_{pde}, w_{ic}$) to *maximize* the loss for 1 step (using `dde.Variable`). This adversarial approach forces the network to focus on the hardest parts of the breather.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+## Category 10: 2026 Next-Gen Architectures (Transolver & PIKAN)
+*Scaling laws show that MLPs struggle with multi-scale phenomena like breathers. Moving to dynamic activations and attention mechanisms drastically reduces the required parameter count, fitting perfectly within a 30-min budget.*
+
+- [ ] **HYP-10.1: PINNsFormer-Lite (Temporal Attention)**
+  - *Idea:* Breathers oscillate periodically in time. Build a custom PyTorch network where the temporal input $t$ passes through a 1D Multi-Head Attention layer (or a simplified Transformer encoder) *before* concatenating with the spatial features $\Theta$ and passing to a standard MLP. This mimics the "Physics-Attention" of 2026 models.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-10.2: Wavelet-based PIKAN (Physics-Informed KAN)**
+  - *Idea:* Implement a lightweight Kolmogorov-Arnold Network (KAN) where the edge activation functions are learnable wavelets (e.g., Morlet or Mexican Hat), rather than standard B-splines. Wavelets are mathematically superior for localizing the sharp peaks of a breather in the $\Theta$ domain. Keep the network extremely small (e.g., [2, 10, 10, 2]) to maximize speed.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-10.3: Complex-Valued Architecture with Phase Coupling**
+  - *Idea:* The 1D LLE is a complex equation, but separating it into real ($u$) and imaginary ($v$) channels destroys the phase coupling in standard MLPs. Build a PyTorch module using `torch.complex64` weights. Apply complex-valued activations (e.g., Complex Tanh or modReLU) and output a single complex tensor, computing the residual natively in complex arithmetic before splitting into absolute errors for the loss.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+## Category 11: Breather-Specific Physics & Sampling
+*Breathers are localized in space but oscillate in time. Uniform sampling wastes 90% of compute on the flat CW (Continuous Wave) background.*
+
+- [ ] **HYP-11.1: Targeted Breather-Peak Sampling**
+  - *Idea:* We know from the Initial Condition that the breather peak is located at $\Theta \approx 0$ (or the center of the domain). Override DeepXDE's sampling to draw 70% of the collocation points strictly in a narrow spatial band around the peak, and only 30% in the background.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-11.2: R3 Sampling (Retain-Resample-Release) Callback**
+  - *Idea:* Implement the 2026 ICML standard R3 sampling. Create a custom callback that triggers every 5000 epochs: it evaluates the PDE residual on a dense grid, **Retains** the top 20% highest-error points, **Releases** (drops) the lowest-error points, and **Resamples** the rest randomly. Update `model.data.replace_points()`.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
+- [ ] **HYP-11.3: Breather-Tuned Fourier Features**
+  - *Idea:* Standard Fourier Features (`dde.nn.MsFFN`) use randomly initialized frequencies. For a breather, we want to force the network to "see" the specific spatial and temporal frequencies. Hardcode the Fourier feature mapping to include specific harmonic frequencies: $\sin(k \Theta)$ and $\cos(\omega_b t)$, where $\omega_b$ is an educated guess of the breather oscillation frequency.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
