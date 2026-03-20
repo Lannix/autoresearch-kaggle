@@ -426,8 +426,6 @@ max_train_time = TIME_BUDGET - EVAL_RESERVE
 adam_time_limit = max_train_time * 0.60
 lbfgs_total_iters = 5000
 lbfgs_inner_iters = 250
-relobralo_period_steps = 500
-relobralo_lookback_updates = 8
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
 
@@ -440,93 +438,6 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
     def on_epoch_end(self):
         if time.time() - self.start_time > self.max_duration:
             self.model.stop_training = True
-
-
-class ReLoBRaLoLossBalancer(dde.callbacks.Callback):
-    def __init__(
-        self,
-        shared_weights,
-        component_names,
-        period_steps=500,
-        lookback_updates=8,
-        smoothing=0.7,
-        min_scale=0.35,
-        max_scale=2.50,
-        seed=42,
-    ):
-        super().__init__()
-        self.shared_weights = shared_weights
-        self.component_names = tuple(component_names)
-        self.period_steps = int(period_steps)
-        self.lookback_updates = int(lookback_updates)
-        self.smoothing = float(smoothing)
-        self.min_scale = float(min_scale)
-        self.max_scale = float(max_scale)
-        self.seed = int(seed)
-        self.base_weights = np.asarray(shared_weights, dtype=np.float64)
-        self.total_weight = float(np.sum(self.base_weights))
-        self.min_weights = self.base_weights * self.min_scale
-        self.max_weights = self.base_weights * self.max_scale
-
-    def on_train_begin(self):
-        self.rng = np.random.default_rng(self.seed)
-        self.history = []
-        self.last_seen_logged_step = -1
-        self.last_rebalance_step = 0
-
-    def on_epoch_end(self):
-        if not self.model.losshistory.steps:
-            return
-        step = int(self.model.losshistory.steps[-1])
-        if step == self.last_seen_logged_step:
-            return
-        loss_train = self.model.losshistory.loss_train[-1]
-        if loss_train is None:
-            return
-
-        current_losses = np.asarray(
-            loss_train[: len(self.shared_weights)],
-            dtype=np.float64,
-        )
-        self.last_seen_logged_step = step
-        self.history.append((step, current_losses.copy()))
-
-        if len(self.history) < 2:
-            return
-        if step - self.last_rebalance_step < self.period_steps:
-            return
-
-        max_offset = min(self.lookback_updates, len(self.history) - 1)
-        if max_offset < 1:
-            return
-
-        ref_offset = int(self.rng.integers(1, max_offset + 1))
-        reference_losses = self.history[-1 - ref_offset][1]
-        relative_progress = current_losses / (reference_losses + 1e-12)
-
-        target_weights = self.base_weights * relative_progress
-        target_weights *= self.total_weight / (np.sum(target_weights) + 1e-12)
-        target_weights = np.clip(target_weights, self.min_weights, self.max_weights)
-        target_weights *= self.total_weight / (np.sum(target_weights) + 1e-12)
-
-        current_weights = np.asarray(self.shared_weights, dtype=np.float64)
-        blended_weights = (
-            self.smoothing * current_weights
-            + (1.0 - self.smoothing) * target_weights
-        )
-        blended_weights = np.clip(blended_weights, self.min_weights, self.max_weights)
-        blended_weights *= self.total_weight / (np.sum(blended_weights) + 1e-12)
-
-        for idx, value in enumerate(blended_weights.tolist()):
-            self.shared_weights[idx] = float(value)
-        self.model.loss_weights = self.shared_weights
-        self.last_rebalance_step = step
-
-        weight_summary = ", ".join(
-            f"{name}={weight:.3f}"
-            for name, weight in zip(self.component_names, self.shared_weights)
-        )
-        print(f"[INFO] ReLoBRaLo step {step}: {weight_summary}")
 
 
 def configure_pytorch_lbfgs(total_iters, inner_iters):
@@ -552,23 +463,13 @@ def model_uv(t_in, th_in, need_x=False):
 
 # Loss weights order corresponds to [pde_u, pde_v, global_power_dt].
 loss_weights =[3.0, 3.0, 0.5]
-relobralo_callback = ReLoBRaLoLossBalancer(
-    shared_weights=loss_weights,
-    component_names=("pde_u", "pde_v", "power"),
-    period_steps=relobralo_period_steps,
-    lookback_updates=relobralo_lookback_updates,
-)
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
-    losshistory, train_state = model.train(
-        iterations=100000,
-        callbacks=[time_callback_adam, relobralo_callback],
-        display_every=500,
-    )
+    losshistory, train_state = model.train(iterations=100000, callbacks=[time_callback_adam], display_every=1000)
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
@@ -579,7 +480,7 @@ try:
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
-        callbacks=[time_callback_lbfgs, relobralo_callback],
+        callbacks=[time_callback_lbfgs],
         display_every=10,
     )
     
