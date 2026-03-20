@@ -86,6 +86,7 @@ time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
 msffn_sigmas = (1.0, 10.0)
 msffn_features_per_scale = 16
+cw_background_real = float(math.sqrt(max(f, 0.0)))
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -279,8 +280,14 @@ class NormalizedChainRuleNet(dde.nn.NN):
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
+        exact_ic = torch.cat((u_exact, v_exact), dim=1)
+        cw_background = torch.tensor(
+            [[cw_background_real, 0.0]],
+            device=x_norm.device,
+            dtype=x_norm.dtype,
+        )
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
+        return exact_ic + growth * (cw_background + raw - exact_ic)
 
     def forward(self, inputs):
         self.last_x_norm = self.normalize_inputs(inputs)
@@ -300,6 +307,7 @@ print(
     f"time_points={power_stabilization_time_count}, "
     f"late_start_frac={power_stabilization_start_frac:.2f}"
 )
+print(f"[INFO] CW background prior: psi_cw=[{cw_background_real:.6f}, 0.0]")
 def global_power_stabilization_loss(device, dtype):
     tensors = get_power_stabilization_tensors(device, dtype)
     uv = net.forward_from_normalized(net.normalize_inputs(tensors["points"]))
