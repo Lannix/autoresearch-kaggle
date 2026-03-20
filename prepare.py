@@ -11,7 +11,7 @@ from scipy.io import loadmat
 TIME_BUDGET = 1800 
 
 # Path to the dataset on Kaggle
-DATA_PATH = "/kaggle/input/datasets/alexlannix/matlab-conditions/Breather.mat"
+DATA_PATH = "/kaggle/input/datasets/technolight/matlab-conditions/Breather.mat"
 
 _GROUND_TRUTH = None
 

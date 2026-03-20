@@ -73,15 +73,7 @@ def main():
     except Exception as e:
         safe_print(f"[ERROR] Failed to merge Python files: {e}")
         return
-
-    dataset_sources = ["alexlannix/matlab-conditions"]
-    data_path_match = re.search(
-        r'DATA_PATH\s*=\s*"\/kaggle\/input\/datasets\/([^\/]+)\/([^\/]+)\/',
-        prepare_code,
-    )
-    if data_path_match:
-        dataset_sources = [f"{data_path_match.group(1)}/{data_path_match.group(2)}"]
-
+    
     # ---------------------------------------------------------
     # 2. Kernel Metadata
     # ---------------------------------------------------------
@@ -94,7 +86,7 @@ def main():
         "is_private": "true",
         "enable_gpu": "true",
         "enable_internet": "true",
-        "dataset_sources": dataset_sources,
+        "dataset_sources": ["technolight/matlab-conditions"],
         "competition_sources": [],
         "kernel_sources":[],
         "model_sources":[]
