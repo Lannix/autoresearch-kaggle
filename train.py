@@ -202,11 +202,61 @@ def build_gaussian_biased_collocation_points(num_points):
     return collocation_points
 
 
+class MultiScaleFourierCore(torch.nn.Module):
+    def __init__(
+        self,
+        input_dim=2,
+        hidden_dim=128,
+        num_hidden_layers=5,
+        output_dim=2,
+        sigmas=(1.0, 10.0),
+        features_per_scale=16,
+    ):
+        super().__init__()
+        self.sigmas = tuple(float(sigma) for sigma in sigmas)
+        self.features_per_scale = int(features_per_scale)
+
+        for idx, sigma in enumerate(self.sigmas):
+            projection = torch.randn(self.features_per_scale, input_dim) * sigma
+            self.register_buffer(f"projection_{idx}", projection)
+
+        encoded_dim = input_dim + 2 * self.features_per_scale * len(self.sigmas)
+        layer_dims = [encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        layers = []
+        for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
+            layers.append(torch.nn.Linear(in_dim, out_dim))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
+        self.network = torch.nn.Sequential(*layers)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for module in self.network:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
+
+    def encode(self, x):
+        encoded = [x]
+        for idx in range(len(self.sigmas)):
+            projection = getattr(self, f"projection_{idx}")
+            angles = 2.0 * math.pi * (x @ projection.T)
+            encoded.append(torch.sin(angles))
+            encoded.append(torch.cos(angles))
+        return torch.cat(encoded, dim=1)
+
+    def forward(self, x):
+        return self.network(self.encode(x))
+
+
 class NormalizedChainRuleNet(dde.nn.NN):
     def __init__(self):
         super().__init__()
-        self.core = dde.nn.FNN([2] + [128] * 5 + [2], "tanh", "Glorot uniform")
-        self.regularizer = self.core.regularizer
+        self.core = MultiScaleFourierCore(
+            sigmas=(1.0, 10.0),
+            features_per_scale=16,
+        )
+        self.regularizer = None
         self.last_x_norm = None
 
     def normalize_inputs(self, x):
@@ -237,6 +287,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+print("[INFO] MsFFN-style core: sigmas=(1.0, 10.0), features_per_scale=16")
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_stabilization_theta_count}, "
