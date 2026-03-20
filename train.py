@@ -89,6 +89,10 @@ time_bias_beta_b = 3.0
 # 3. Neural Network Architecture
 # ==========================================
 ic_fourier_cache = {}
+power_stabilization_cache = {}
+power_stabilization_theta_count = 512
+power_stabilization_time_count = 6
+power_stabilization_start_frac = 0.80
 
 
 def get_ic_fourier_tensors(device, dtype):
@@ -106,6 +110,47 @@ def get_ic_fourier_tensors(device, dtype):
             "t0": torch.tensor(t0, device=device, dtype=dtype),
         }
     return ic_fourier_cache[key]
+
+
+def build_power_stabilization_grid(theta_count, time_count):
+    theta_points = np.linspace(
+        th_min,
+        th_max,
+        theta_count,
+        endpoint=False,
+        dtype=np.float32,
+    ).reshape(-1, 1)
+    time_points = np.linspace(
+        t_min + power_stabilization_start_frac * (t_max - t_min),
+        t_max,
+        time_count,
+        dtype=np.float32,
+    ).reshape(-1, 1)
+    theta_grid = np.tile(theta_points[None, :, :], (time_count, 1, 1))
+    time_grid = np.tile(time_points[:, None, :], (1, theta_count, 1))
+    points = np.concatenate((theta_grid, time_grid), axis=2).reshape(-1, 2)
+    pair_times = time_points[1:]
+    pair_weights = ((pair_times - t_min) / (t_max - t_min + 1e-12)) ** 4.0
+    return points.astype(np.float32), pair_weights.astype(np.float32)
+
+
+def get_power_stabilization_tensors(device, dtype):
+    key = (device.type, device.index, str(dtype))
+    if key not in power_stabilization_cache:
+        points, pair_weights = build_power_stabilization_grid(
+            power_stabilization_theta_count,
+            power_stabilization_time_count,
+        )
+        power_stabilization_cache[key] = {
+            "points": torch.as_tensor(points, device=device, dtype=dtype),
+            "pair_weights": torch.as_tensor(pair_weights, device=device, dtype=dtype),
+            "delta_t": torch.tensor(
+                (1.0 - power_stabilization_start_frac) * (t_max - t_min) / max(1, power_stabilization_time_count - 1),
+                device=device,
+                dtype=dtype,
+            ),
+        }
+    return power_stabilization_cache[key]
 
 def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     theta_rel = theta - coeffs["theta_origin"]
@@ -192,6 +237,25 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 net = NormalizedChainRuleNet()
 custom_collocation_points = build_gaussian_biased_collocation_points(num_domain_points)
+print(
+    "[INFO] Global power prior: "
+    f"theta_points={power_stabilization_theta_count}, "
+    f"time_points={power_stabilization_time_count}, "
+    f"late_start_frac={power_stabilization_start_frac:.2f}"
+)
+
+
+def global_power_stabilization_loss(device, dtype):
+    tensors = get_power_stabilization_tensors(device, dtype)
+    uv = net.forward_from_normalized(net.normalize_inputs(tensors["points"]))
+    intensity = uv[:, 0:1].square() + uv[:, 1:2].square()
+    power_by_time = intensity.view(
+        power_stabilization_time_count,
+        power_stabilization_theta_count,
+        1,
+    ).mean(dim=1) * theta_period
+    power_dt = (power_by_time[1:] - power_by_time[:-1]) / (tensors["delta_t"] + 1e-12)
+    return tensors["pair_weights"] * power_dt
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -244,8 +308,9 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
+    power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
 
-    return [causal_weight * res_u, causal_weight * res_v]
+    return [causal_weight * res_u, causal_weight * res_v, power_stabilization]
 
 
 data = dde.data.TimePDE(
@@ -302,8 +367,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds to the PDE residual outputs.
-loss_weights =[3.0, 3.0]
+# Loss weights order corresponds to [pde_u, pde_v, global_power_dt].
+loss_weights =[3.0, 3.0, 0.5]
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
