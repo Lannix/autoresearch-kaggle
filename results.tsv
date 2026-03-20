@@ -64,3 +64,4 @@ ee5118d	4.889051e-02	2.07	DISCARD	HYP-1.10 three-scale MsFFN feature bank
 28c43f1	2.210094e+00	3.12	DISCARD	HYP-5.9 hard CW-background subtraction
 1ffd5c7	4.511156e-02	2.05	DISCARD	HYP-11.1 targeted breather-peak sampling
 e78b320	3.716117e-02	2.08	KEEP	HYP-11.3 breather-tuned Fourier features
+4a8a5ca	3.735390e-02	2.08	DISCARD	HYP-9.1 ReLoBRaLo callback

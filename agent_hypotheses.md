@@ -342,10 +342,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 ## Category 9: 2026 Advanced Loss Balancing & Optimization
 *Based on recent SciML literature, static loss weights fail on stiff PDEs because the network gets trapped in local saddle points between the boundary conditions and the PDE residual.*
 
-- [ ] **HYP-9.1: ReLoBRaLo (Relative Loss Balancing with Random Lookback)**
+- [x] **HYP-9.1: ReLoBRaLo (Relative Loss Balancing with Random Lookback)**
   - *Idea:* Implement a simplified version of ReLoBRaLo as a DeepXDE callback. At every $N$ epochs, dynamically adjust the loss weights ($w_{pde}, w_{ic}, w_{bc}$) based on the ratio of the current losses to the losses from a random previous epoch. This prevents the "gradient pathology" where the IC/BC losses dominate the highly non-linear breather PDE.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+1.927e-04 val_mse regression]
+  - *Notes:* Starting from the kept HYP-11.3 breather-tuned Fourier baseline, added a lightweight ReLoBRaLo-style callback that watched the three active loss channels `[pde_u, pde_v, power]`, sampled a random reference point from the recent loss history every `500` logged steps, and updated the shared loss-weight list in place while preserving the total weight and clamping each channel to a bounded multiple of its initial value. Kaggle T4 stayed numerically stable, the adaptive weights moved sensibly instead of collapsing (`pde_u` and `pde_v` stayed near `3`, while the power prior varied roughly between `0.29` and `0.88`), and peak VRAM remained flat at `2133.0 MB`, but final `val_mse` still regressed slightly from `3.716117e-02` to `3.735390e-02`, so this simplified ReLoBRaLo proxy improved balance without beating the strong fixed-weight baseline.
 
 - [ ] **HYP-9.2: Curriculum Learning (Time-Marching Expansion)**
   - *Idea:* Breathers exhibit "propagation failure" because the network tries to learn the chaotic late-time oscillations before understanding the early-time formation. Write a callback that starts the training domain strictly at $t \in [t_0, t_0 + \Delta t]$ and gradually expands the upper time bound $t_{max}$ as the PDE residual drops below a threshold.
