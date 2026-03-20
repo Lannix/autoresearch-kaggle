@@ -186,10 +186,10 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [DISCARD] | *Delta:* [+3.424e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, replaced the existing late-time first-difference global-power prior with a softer second-difference curvature penalty on the integrated intracavity power, keeping the same `512 x 6` late-time evaluation grid but reducing the stabilization weight from `0.5` to `0.1`. Kaggle T4 stayed stable, peak VRAM remained effectively flat at `2104.2 MB`, and both Adam and L-BFGS converged cleanly, but final `val_mse` still regressed slightly from `4.465095e-02` to `4.499337e-02`, so the original first-derivative global-power stabilization remains the better attractor prior in this setup.
 
-- [ ] **HYP-5.9: Hard CW-Background Subtraction**
+- [x] **HYP-5.9: Hard CW-Background Subtraction**
   - *Idea:* Treat the dominant continuous-wave background as known structure and let the network spend its capacity only on the breather residual by transitioning from the exact initial condition toward `psi_cw + residual`, with `psi_cw = [sqrt(f), 0]`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* [+2.165e+00 val_mse regression]
+  - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, modified the hard-IC ansatz so the model transitions from the exact initial condition toward `psi_cw + residual` with `psi_cw = [sqrt(f), 0]`, while leaving the Gaussian-beta collocation sampler, causal PDE weighting, and global-power stabilization prior unchanged. After fixing an unrelated Kaggle dataset-mount mismatch in `launch.py` and rerunning, the training stayed numerically stable but generalized very poorly: peak VRAM rose to `3194.1 MB`, total progress fell to `7415` steps, and final `val_mse` collapsed from `4.465095e-02` to `2.210094e+00`, so forcing this simple CW background as a hard prior is badly mismatched to the current breather dynamics.
 
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
