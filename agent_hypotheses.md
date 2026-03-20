@@ -171,6 +171,11 @@ Guide the network using known asymptotic behaviors of LLE.
   - *Outcome:* [DISCARD] | *Delta:* [+5.245e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-6.9 beta-biased static-collocation baseline, restored the global `theta_peak` variable used by the Gaussian sampler and added two "zero-cost" edge penalties using the already-computed normalized first derivatives: `edge_mask * du/dtheta_norm` and `edge_mask * dv/dtheta_norm`, with `edge_mask = theta_norm^2` and loss weights `[3.0, 3.0, 0.5, 0.5]`. Kaggle T4 stayed stable and kept peak VRAM essentially flat at `1981.7 MB`, but the edge penalties plateaued around `1.4e-03` and `3.7e-03`, final `val_mse` regressed from `5.666258e-02` to `5.718708e-02`, and the extra background shaping did not improve the current hard-IC beta-sampled model.
 
+- [ ] **HYP-5.7: Late-Time Cycle Consistency on the MsFFN Baseline**
+  - *Idea:* Revisit the near-miss late-time periodicity prior from HYP-5.1, but now on top of the kept MsFFN plus global-power baseline. Penalize differences between `psi(t_max, theta)` and `psi(t_max - dt, theta)` on a fixed theta grid so the stronger spectral representation gets a light hint toward the final breather cycle.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
+
 ## Category 6: Collocation Sampling & Adaptive Refinement
 Uniform sampling is inefficient because breathers occupy a tiny fraction of the $(t, \theta)$ domain.
 
