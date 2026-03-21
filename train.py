@@ -93,7 +93,7 @@ curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
 curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
 curriculum_min_stage_steps = 1000
 r3_period = 5000
-r3_retain_fraction = 0.30
+r3_retain_fraction = 0.20
 r3_score_batch_size = 1024
 
 # ==========================================
