@@ -357,7 +357,7 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
 
-## Category 10: 2026 Next-Gen Architectures (Transolver & PIKAN)
+## Category 10: 2026 Next-Gen Architectures (Attention, Transolver & PIKAN)
 *Scaling laws show that MLPs struggle with multi-scale phenomena like breathers. Moving to dynamic activations and attention mechanisms drastically reduces the required parameter count, fitting perfectly within a 30-min budget.*
 
 - [x] **HYP-10.1: PINNsFormer-Lite (Temporal Attention)**
@@ -374,6 +374,26 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* The 1D LLE is a complex equation, but separating it into real ($u$) and imaginary ($v$) channels destroys the phase coupling in standard MLPs. Build a PyTorch module using `torch.complex64` weights. Apply complex-valued activations (e.g., Complex Tanh or modReLU) and output a single complex tensor, computing the residual natively in complex arithmetic before splitting into absolute errors for the loss.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* ...
+
+- [ ] **HYP-10.4: Transolver-Style Linear Attention (Physics-Attention)**
+  - *Idea:* Standard softmax attention fails for PINNs due to $O(N^2)$ cost across batch points and stiff 2nd-order derivatives. Implement a 2026 linear-transformer block where the attention drops the softmax and computes $V \times (K^T \times Q)$ so the network can aggregate global frequency features without the autograd overhead.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Starting from the kept MsFFN baseline, add an explicit Hessian-friendly linear-attention block right after the encoded Fourier feature bank, using `Q = x W_q`, `K = x W_k`, `V = x W_v`, `attn = K^T V`, and `out = Q attn`. This keeps the operator strictly $O(N \cdot d^2)$, avoids PyTorch fused SDPA entirely, and is a direct Transolver-style retry after the HYP-10.1 crash history.
+
+- [ ] **HYP-10.5: Frequency-Domain Self-Gating (Spectral Attention)**
+  - *Idea:* Breathers have a flat Continuous Wave (CW) background and a sharp localized peak. Instead of attending to other *points*, attend to the *frequencies* by learning per-feature gates for the encoded Fourier bank.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* In `MultiScaleFourierCore`, keep `freq_features = self.encode(x)` and add a lightweight gate network `gate_net(x) -> [0, 1]^{encoded_dim}` so `attended_features = freq_features * gate_net(x)`. This is the most L-BFGS-friendly attention candidate because it adds only a small MLP, avoids pointwise softmax Hessians, and lets the model suppress high-frequency modes in the flat CW background while preserving them near the breather peak.
+
+- [ ] **HYP-10.6: Cross-Attention to the Exact Initial Condition**
+  - *Idea:* PINN temporal evolution can fail because the network gradually forgets the initial state. We already have the exact Fourier representation of the IC in memory, so use the current physical coordinates as queries and the fixed IC Fourier coefficients as keys and values.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Project the stored exact IC Fourier coefficients into a fixed `K` and `V` memory bank, project each batch of `(theta, t)` points into `Q`, compute explicit cross-attention against the IC memory, and concatenate the attended IC summary with the MsFFN features before the main MLP. This is a PINNsFormer-style way to anchor long-time evolution to the exact initial state without reintroducing a soft IC loss.
+
+- [ ] **HYP-10.7: Factorized Space-Time Attention (Separable Gating)**
+  - *Idea:* LLE has distinct spatial and temporal dynamics, so use separate attention-like gates for $\theta$ and $t$ before merging them instead of forcing a fully entangled first layer.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Split the encoded feature bank into spatial and temporal groups, compute `space_attn = MLP_theta(theta)` and `time_attn = MLP_t(t)`, then apply those gates to the corresponding spatial Fourier and temporal harmonic features before recombining them. This should be cheaper and smoother than full attention while still importing the 2026 dimension-factorized modeling trend.
 
 ## Category 11: Breather-Specific Physics & Sampling
 *Breathers are localized in space but oscillate in time. Uniform sampling wastes 90% of compute on the flat CW (Continuous Wave) background.*
