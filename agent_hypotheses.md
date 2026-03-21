@@ -360,10 +360,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 ## Category 10: 2026 Next-Gen Architectures (Transolver & PIKAN)
 *Scaling laws show that MLPs struggle with multi-scale phenomena like breathers. Moving to dynamic activations and attention mechanisms drastically reduces the required parameter count, fitting perfectly within a 30-min budget.*
 
-- [ ] **HYP-10.1: PINNsFormer-Lite (Temporal Attention)**
+- [x] **HYP-10.1: PINNsFormer-Lite (Temporal Attention)**
   - *Idea:* Breathers oscillate periodically in time. Build a custom PyTorch network where the temporal input $t$ passes through a 1D Multi-Head Attention layer (or a simplified Transformer encoder) *before* concatenating with the spatial features $\Theta$ and passing to a standard MLP. This mimics the "Physics-Attention" of 2026 models.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [CRASH] | *Delta:* [backend crash before val_mse]
+  - *Notes:* Starting from the kept HYP-11.2 baseline, inserted a lightweight temporal-attention block into the MsFFN core by turning the deterministic time-harmonic pairs into tokens, applying `torch.nn.MultiheadAttention`, and concatenating the attended time summary back into the encoded feature vector. Kaggle T4 crashed immediately during the very first DeepXDE loss evaluation: PyTorch's fused scaled-dot-product attention backend does not expose the higher-order backward path required by the PDE's second derivatives, raising `RuntimeError: derivative for aten::_scaled_dot_product_efficient_attention_backward is not implemented`. This means the idea is still conceptually untested in this codebase; it needs a manual softmax attention implementation or a forced non-fused attention backend before it can be evaluated fairly.
 
 - [ ] **HYP-10.2: Wavelet-based PIKAN (Physics-Informed KAN)**
   - *Idea:* Implement a lightweight Kolmogorov-Arnold Network (KAN) where the edge activation functions are learnable wavelets (e.g., Morlet or Mexican Hat), rather than standard B-splines. Wavelets are mathematically superior for localizing the sharp peaks of a breather in the $\Theta$ domain. Keep the network extremely small (e.g., [2, 10, 10, 2]) to maximize speed.
