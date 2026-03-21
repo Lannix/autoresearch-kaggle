@@ -92,6 +92,9 @@ breather_time_harmonics = (1.0, 2.0)
 curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
 curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
 curriculum_min_stage_steps = 1000
+r3_period = 5000
+r3_retain_fraction = 0.20
+r3_score_batch_size = 1024
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -368,9 +371,9 @@ def global_power_stabilization_loss(device, dtype):
 # ==========================================
 # 4. Physics / LLE Residual
 # ==========================================
-def pde(x, y):
+def compute_weighted_pde_residuals(x, y=None):
     x_norm = net.last_x_norm
-    if x_norm is None or x_norm.shape[0] != x.shape[0]:
+    if y is None or x_norm is None or x_norm.shape[0] != x.shape[0]:
         x_norm = net.normalize_inputs(x)
         y = net.forward_from_normalized(x_norm)
 
@@ -416,9 +419,13 @@ def pde(x, y):
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
-    power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
+    return causal_weight * res_u, causal_weight * res_v
 
-    return [causal_weight * res_u, causal_weight * res_v, power_stabilization]
+
+def pde(x, y):
+    weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x, y)
+    power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
+    return [weighted_res_u, weighted_res_v, power_stabilization]
 
 
 data = dde.data.TimePDE(
@@ -509,8 +516,11 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
             f"time_upper={curriculum_time_upper:.4f}"
         )
 
-    def set_final_stage(self):
-        self.stage_index = len(self.stage_upper_fracs) - 1
+    def set_final_stage(self, preserve_current_anchors=False):
+        final_stage_index = len(self.stage_upper_fracs) - 1
+        self.stage_index = final_stage_index
+        if preserve_current_anchors and abs(curriculum_time_upper - t_max) < 1e-6:
+            return
         self.apply_stage(self.stage_index)
 
 
@@ -524,6 +534,87 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
         1,
         lbfgs_options["maxfun"] * inner_iters // max(1, total_iters),
     )
+
+
+def residual_scores_for_points(points_np, batch_size):
+    original_requires_grad = [param.requires_grad for param in net.parameters()]
+    for param in net.parameters():
+        param.requires_grad_(False)
+
+    scores = []
+    try:
+        for start in range(0, points_np.shape[0], batch_size):
+            stop = start + batch_size
+            x_batch = torch.tensor(
+                points_np[start:stop],
+                device=device,
+                dtype=torch.float32,
+            ).requires_grad_(True)
+            weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x_batch)
+            score = torch.sqrt(
+                weighted_res_u[:, 0].square() + weighted_res_v[:, 0].square() + 1e-12
+            )
+            scores.append(score.detach().cpu().numpy())
+            del x_batch, weighted_res_u, weighted_res_v, score
+        return np.concatenate(scores, axis=0)
+    finally:
+        for param, requires_grad in zip(net.parameters(), original_requires_grad):
+            param.requires_grad_(requires_grad)
+
+
+class R3Resampler(dde.callbacks.Callback):
+    def __init__(self, period, retain_fraction, score_batch_size):
+        super().__init__()
+        self.period = int(period)
+        self.retain_fraction = float(retain_fraction)
+        self.score_batch_size = int(score_batch_size)
+        self.has_updated = False
+
+    def on_epoch_end(self):
+        if curriculum_time_upper < t_max - 1e-6:
+            return
+
+        step = int(self.model.train_state.step)
+        if step == 0 or step % self.period != 0:
+            return
+
+        current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
+        if current_points.shape[0] == 0:
+            return
+
+        residual_scores = residual_scores_for_points(current_points, self.score_batch_size)
+        retain_count = max(1, int(round(current_points.shape[0] * self.retain_fraction)))
+        retain_indices = np.argpartition(residual_scores, -retain_count)[-retain_count:]
+        retained_points = current_points[retain_indices].astype(np.float32)
+        retained_scores = residual_scores[retain_indices]
+
+        resampled_count = current_points.shape[0] - retain_count
+        refreshed_points = build_gaussian_biased_collocation_points(
+            resampled_count,
+            time_upper=curriculum_time_upper,
+            log_prefix=f"R3 refresh step {step}",
+        )
+        updated_points = np.vstack((retained_points, refreshed_points)).astype(np.float32)
+        np.random.shuffle(updated_points)
+
+        self.model.data.replace_with_anchors(updated_points)
+        self.model.data.test_x = None
+        self.model.data.test_y = None
+        self.model.data.test_aux_vars = None
+        self.model.train_state.set_data_train(
+            self.model.data.train_x,
+            self.model.data.train_y,
+            self.model.data.train_aux_vars,
+        )
+        self.model.train_state.set_data_test(*self.model.data.test())
+        self.has_updated = True
+
+        print(
+            f"[INFO] R3 refresh at step {step}: retained {retain_count}/{current_points.shape[0]} "
+            f"points ({100.0 * retain_count / current_points.shape[0]:.1f}%), "
+            f"retained_mean={float(retained_scores.mean()):.3e}, "
+            f"retained_max={float(retained_scores.max()):.3e}"
+        )
 
 def model_uv(t_in, th_in, need_x=False):
     # DeepXDE inputs are [theta, t]
@@ -542,6 +633,11 @@ curriculum_callback = TimeCurriculumScheduler(
     stage_loss_thresholds=curriculum_stage_loss_thresholds,
     min_stage_steps=curriculum_min_stage_steps,
 )
+r3_callback = R3Resampler(
+    period=r3_period,
+    retain_fraction=r3_retain_fraction,
+    score_batch_size=r3_score_batch_size,
+)
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
 
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
@@ -550,14 +646,14 @@ try:
     print("\n[INFO] Phase 1: Adam optimization")
     losshistory, train_state = model.train(
         iterations=100000,
-        callbacks=[time_callback_adam, curriculum_callback],
+        callbacks=[time_callback_adam, curriculum_callback, r3_callback],
         display_every=1000,
     )
     
     print("\n[INFO] Phase 2: L-BFGS optimization")
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # base it on total elapsed time overall
-    curriculum_callback.set_final_stage()
+    curriculum_callback.set_final_stage(preserve_current_anchors=r3_callback.has_updated)
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks.
     configure_pytorch_lbfgs(lbfgs_total_iters, lbfgs_inner_iters)
