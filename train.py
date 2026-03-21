@@ -95,8 +95,6 @@ curriculum_min_stage_steps = 1000
 r3_period = 5000
 r3_retain_fraction = 0.20
 r3_score_batch_size = 1024
-r3_refresh_time_beta_a = 2.0
-r3_refresh_time_beta_b = 1.5
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -180,16 +178,8 @@ def wrap_theta_to_domain(theta):
     return ((theta - th_min) % domain_width) + th_min
 
 
-def build_gaussian_biased_collocation_points(
-    num_points,
-    time_upper=None,
-    log_prefix="Static",
-    time_beta_a=None,
-    time_beta_b=None,
-):
+def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_prefix="Static"):
     time_upper = float(t_max if time_upper is None else time_upper)
-    time_beta_a = float(time_bias_beta_a if time_beta_a is None else time_beta_a)
-    time_beta_b = float(time_bias_beta_b if time_beta_b is None else time_beta_b)
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
 
@@ -209,8 +199,8 @@ def build_gaussian_biased_collocation_points(
     np.random.shuffle(theta_samples_biased)
 
     time_samples_biased = np.random.beta(
-        time_beta_a,
-        time_beta_b,
+        time_bias_beta_a,
+        time_bias_beta_b,
         size=(num_points, 1),
     ).astype(np.float32)
     time_samples_biased = (
@@ -223,7 +213,7 @@ def build_gaussian_biased_collocation_points(
         f"[INFO] {log_prefix} Gaussian-biased collocation: "
         f"{gaussian_count} Gaussian + {uniform_count} uniform theta samples, "
         f"theta_peak={theta_peak:.4f}, sigma={gaussian_collocation_sigma:.4f}, "
-        f"time_beta=({time_beta_a:.1f}, {time_beta_b:.1f}), "
+        f"time_beta=({time_bias_beta_a:.1f}, {time_bias_beta_b:.1f}), "
         f"time_upper={time_upper:.4f}"
     )
     return collocation_points
@@ -603,8 +593,6 @@ class R3Resampler(dde.callbacks.Callback):
             resampled_count,
             time_upper=curriculum_time_upper,
             log_prefix=f"R3 refresh step {step}",
-            time_beta_a=r3_refresh_time_beta_a,
-            time_beta_b=r3_refresh_time_beta_b,
         )
         updated_points = np.vstack((retained_points, refreshed_points)).astype(np.float32)
         np.random.shuffle(updated_points)
