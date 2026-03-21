@@ -402,3 +402,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Keep the winning one-shot R3 timing at Adam step `5000`, but retain more of the matured full-domain anchor set, e.g. `30%` hard points instead of `20%`, so the refresh preserves global coverage while still injecting new difficult regions.
   - *Outcome:* [DISCARD] | *Delta:* [+8.407e-04 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, kept the same one-shot full-domain R3 schedule at Adam step `5000` but raised the retain fraction from `20%` to `30%`, so `9000` current hard anchors were preserved and only `21000` points were resampled from the winning Gaussian-plus-uniform `theta` sampler with `Beta(1, 3)` time bias. Kaggle T4 stayed fully stable, peak VRAM remained flat at `2133.1 MB`, and the post-refresh optimization recovered better than the earlier-refresh variant, but it still did not beat the current winner: final `val_mse` regressed from `3.376563e-02` to `3.460632e-02` with `9490` total steps. The weaker residual concentration (`retained_mean = 1.524e-01` versus `1.859e-01` for HYP-11.2) suggests that preserving too much of the old anchor set dilutes the benefit of the refresh.
+
+- [ ] **HYP-11.6: Raw-Residual R3 Scoring**
+  - *Idea:* Keep the winning one-shot R3 refresh schedule and training loss, but rank anchors for retain/resample using the raw PDE residual before causal time weighting. The training objective should still emphasize early-time stability, while the refresh can target hard late-time breather regions that the causal weight may otherwise hide.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...

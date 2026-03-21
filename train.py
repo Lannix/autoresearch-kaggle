@@ -95,6 +95,7 @@ curriculum_min_stage_steps = 1000
 r3_period = 5000
 r3_retain_fraction = 0.20
 r3_score_batch_size = 1024
+r3_score_use_causal_weight = False
 
 # ==========================================
 # 3. Neural Network Architecture
@@ -371,7 +372,7 @@ def global_power_stabilization_loss(device, dtype):
 # ==========================================
 # 4. Physics / LLE Residual
 # ==========================================
-def compute_weighted_pde_residuals(x, y=None):
+def compute_pointwise_pde_residuals(x, y=None):
     x_norm = net.last_x_norm
     if y is None or x_norm is None or x_norm.shape[0] != x.shape[0]:
         x_norm = net.normalize_inputs(x)
@@ -417,6 +418,11 @@ def compute_weighted_pde_residuals(x, y=None):
     intensity = u.square() + v.square()
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
+    return res_u, res_v
+
+
+def compute_weighted_pde_residuals(x, y=None):
+    res_u, res_v = compute_pointwise_pde_residuals(x, y)
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
     causal_weight = torch.exp(-2.0 * time_frac)
     return causal_weight * res_u, causal_weight * res_v
@@ -536,7 +542,7 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
     )
 
 
-def residual_scores_for_points(points_np, batch_size):
+def residual_scores_for_points(points_np, batch_size, use_causal_weight=True):
     original_requires_grad = [param.requires_grad for param in net.parameters()]
     for param in net.parameters():
         param.requires_grad_(False)
@@ -550,12 +556,15 @@ def residual_scores_for_points(points_np, batch_size):
                 device=device,
                 dtype=torch.float32,
             ).requires_grad_(True)
-            weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x_batch)
+            if use_causal_weight:
+                score_res_u, score_res_v = compute_weighted_pde_residuals(x_batch)
+            else:
+                score_res_u, score_res_v = compute_pointwise_pde_residuals(x_batch)
             score = torch.sqrt(
-                weighted_res_u[:, 0].square() + weighted_res_v[:, 0].square() + 1e-12
+                score_res_u[:, 0].square() + score_res_v[:, 0].square() + 1e-12
             )
             scores.append(score.detach().cpu().numpy())
-            del x_batch, weighted_res_u, weighted_res_v, score
+            del x_batch, score_res_u, score_res_v, score
         return np.concatenate(scores, axis=0)
     finally:
         for param, requires_grad in zip(net.parameters(), original_requires_grad):
@@ -582,7 +591,11 @@ class R3Resampler(dde.callbacks.Callback):
         if current_points.shape[0] == 0:
             return
 
-        residual_scores = residual_scores_for_points(current_points, self.score_batch_size)
+        residual_scores = residual_scores_for_points(
+            current_points,
+            self.score_batch_size,
+            use_causal_weight=r3_score_use_causal_weight,
+        )
         retain_count = max(1, int(round(current_points.shape[0] * self.retain_fraction)))
         retain_indices = np.argpartition(residual_scores, -retain_count)[-retain_count:]
         retained_points = current_points[retain_indices].astype(np.float32)
@@ -612,6 +625,7 @@ class R3Resampler(dde.callbacks.Callback):
         print(
             f"[INFO] R3 refresh at step {step}: retained {retain_count}/{current_points.shape[0]} "
             f"points ({100.0 * retain_count / current_points.shape[0]:.1f}%), "
+            f"score_mode={'causal' if r3_score_use_causal_weight else 'raw'}, "
             f"retained_mean={float(retained_scores.mean()):.3e}, "
             f"retained_max={float(retained_scores.max()):.3e}"
         )
