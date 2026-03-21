@@ -392,3 +392,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Standard Fourier Features (`dde.nn.MsFFN`) use randomly initialized frequencies. For a breather, we want to force the network to "see" the specific spatial and temporal frequencies. Hardcode the Fourier feature mapping to include specific harmonic frequencies: $\sin(k \Theta)$ and $\cos(\omega_b t)$, where $\omega_b$ is an educated guess of the breather oscillation frequency.
   - *Outcome:* [KEEP] | *Delta:* [-7.490e-03 val_mse improvement]
   - *Notes:* Starting from the kept HYP-1.2 MsFFN-style baseline, retained the existing random two-scale Fourier bank but augmented it with a deterministic breather-tuned feature bank: periodic theta harmonics `k in {1,2,3,4,5}` aligned to the physical domain period plus explicit time harmonics at a guessed breather period of `0.9990` using multipliers `(1, 2)`. Kaggle T4 stayed stable, peak VRAM rose only modestly to `2133.0 MB`, parameter count increased to `76674`, and the stronger hybrid encoding improved final `val_mse` from `4.465095e-02` to `3.716117e-02`, making this the new best result on the current DeepXDE pipeline.
+
+- [ ] **HYP-11.4: Earlier Full-Domain R3 Refresh**
+  - *Idea:* Keep the winning single-shot R3 callback, but trigger it earlier, immediately after the curriculum reaches the full time horizon, so Adam gets more time to adapt to the retained hard points before L-BFGS takes over.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...

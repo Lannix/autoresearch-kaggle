@@ -92,7 +92,7 @@ breather_time_harmonics = (1.0, 2.0)
 curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
 curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
 curriculum_min_stage_steps = 1000
-r3_period = 5000
+r3_first_refresh_step = 4500
 r3_retain_fraction = 0.20
 r3_score_batch_size = 1024
 
@@ -563,9 +563,9 @@ def residual_scores_for_points(points_np, batch_size):
 
 
 class R3Resampler(dde.callbacks.Callback):
-    def __init__(self, period, retain_fraction, score_batch_size):
+    def __init__(self, first_refresh_step, retain_fraction, score_batch_size):
         super().__init__()
-        self.period = int(period)
+        self.first_refresh_step = int(first_refresh_step)
         self.retain_fraction = float(retain_fraction)
         self.score_batch_size = int(score_batch_size)
         self.has_updated = False
@@ -575,7 +575,7 @@ class R3Resampler(dde.callbacks.Callback):
             return
 
         step = int(self.model.train_state.step)
-        if step == 0 or step % self.period != 0:
+        if self.has_updated or step < self.first_refresh_step:
             return
 
         current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
@@ -634,7 +634,7 @@ curriculum_callback = TimeCurriculumScheduler(
     min_stage_steps=curriculum_min_stage_steps,
 )
 r3_callback = R3Resampler(
-    period=r3_period,
+    first_refresh_step=r3_first_refresh_step,
     retain_fraction=r3_retain_fraction,
     score_batch_size=r3_score_batch_size,
 )
