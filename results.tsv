@@ -69,3 +69,4 @@ e78b320	3.716117e-02	2.08	KEEP	HYP-11.3 breather-tuned Fourier features
 9a5b502	3.376563e-02	2.08	KEEP	HYP-11.2 R3 sampling callback
 563eb47	3.798376e-02	2.08	DISCARD	HYP-11.4 earlier full-domain R3 refresh
 a3850c2	3.460632e-02	2.08	DISCARD	HYP-11.5 gentler R3 refresh
+d9cba79	3.621968e-02	2.08	DISCARD	HYP-11.6 raw-residual R3 scoring
