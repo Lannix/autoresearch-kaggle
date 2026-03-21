@@ -397,3 +397,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Keep the winning single-shot R3 callback, but trigger it earlier, immediately after the curriculum reaches the full time horizon, so Adam gets more time to adapt to the retained hard points before L-BFGS takes over.
   - *Outcome:* [DISCARD] | *Delta:* [+4.218e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, kept the same one-shot `20%` retain / `80%` resample R3 logic but moved the full-domain refresh earlier from Adam step `5000` to step `4500`, immediately after the curriculum reached its final stage. The callback itself worked as intended and retained similarly hard points (`retained_mean ≈ 1.87e-01`, `retained_max ≈ 9.90e-01`) with unchanged peak VRAM at `2133.1 MB`, but the optimization trajectory got noticeably worse: the best Adam checkpoint stayed at step `4000` before the refresh, total progress fell to `9414` steps, and final `val_mse` regressed from `3.376563e-02` to `3.798376e-02`. That suggests the anchor redistribution is helpful only after the optimizer has already spent longer fitting the full-domain batch.
+
+- [ ] **HYP-11.5: Gentler R3 Refresh with Higher Retain Fraction**
+  - *Idea:* Keep the winning one-shot R3 timing at Adam step `5000`, but retain more of the matured full-domain anchor set, e.g. `30%` hard points instead of `20%`, so the refresh preserves global coverage while still injecting new difficult regions.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
