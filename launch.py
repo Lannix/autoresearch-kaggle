@@ -8,7 +8,6 @@ import json
 import time
 import subprocess
 import re
-import shutil
 from dotenv import load_dotenv
 
 # Try to force Windows console to UTF-8
@@ -38,17 +37,8 @@ def run_cmd(cmd):
     # Force Kaggle CLI (which runs in Python) to use UTF-8 internally
     env["PYTHONIOENCODING"] = "utf-8"
 
-    resolved_cmd = cmd
-    if shutil.which("kaggle") is None:
-        resolved_cmd = re.sub(
-            r"^kaggle\b",
-            lambda _match: f'"{sys.executable}" -m kaggle.cli',
-            cmd,
-            count=1,
-        )
-
     # encoding='utf-8' prevents Windows charmap crash if Kaggle outputs special chars
-    res = subprocess.run(resolved_cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', env=env)
+    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', env=env)
     return res.returncode, res.stdout, res.stderr
 
 def main():
