@@ -437,3 +437,35 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Keep the winning R3-plus-curriculum pipeline intact, but expand the deterministic breather-tuned time bank from `(1, 2)` to `(1, 2, 3)` so the model sees a slightly richer temporal prior without changing the random MsFFN scales or the collocation policy.
   - *Outcome:* [DISCARD] | *Delta:* [+3.589e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, left the R3 resampler, curriculum schedule, Gaussian-beta anchor policy, and MsFFN random scales unchanged, and only expanded the deterministic breather-tuned time harmonics from `(1, 2)` to `(1, 2, 3)`. Kaggle T4 stayed stable, total progress remained healthy at `9516` steps, and the extra harmonic only modestly increased parameter count to `76930` and peak VRAM to `2136.9 MB`, but final `val_mse` still regressed from `3.376563e-02` to `3.735495e-02`. The weaker retained residual scores during R3 (`retained_mean = 1.637e-01` versus `1.859e-01` for the winner) suggest the added temporal prior made the representation a bit too diffuse rather than sharpening the useful breather structure.
+
+## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
+
+- [ ] **HYP-12.1: Lightweight PIKAN Core (Physics-Informed Kolmogorov-Arnold Networks)**
+  - *Idea:* The 2026 SciML literature highlights PIKANs as a major improvement for PINNs by replacing fixed node activations with trainable edge functions, which may help the stiff LLE avoid the gradient pathologies seen in standard MLP cores.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Starting from the current `MultiScaleFourierCore`, replace the standard `nn.Linear + nn.Tanh()` stack with a lightweight KAN-style layer implemented locally, for example by adding a parallel trainable Fourier projection or localized RBF branch per layer so each neuron can adapt its activation landscape without pulling in a heavy external KAN dependency.
+
+- [ ] **HYP-12.2: L-LAAF (Layer-wise Locally Adaptive Activation Functions)**
+  - *Idea:* DeepXDE guidance and recent PINN papers suggest L-LAAF can recover slopes and accelerate convergence by letting each layer scale its own activation steepness instead of relying on a fixed `tanh`.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Inside `MultiScaleFourierCore`, replace the fixed activation with `tanh(n * a * x)` where `n = 10` is constant and each layer owns a trainable scalar `a` initialized to `1 / n`. This is a cheap architectural change that directly targets the slope-recovery problem without adding depth or much memory.
+
+- [ ] **HYP-12.3: Learnable Causal Annealing**
+  - *Idea:* The current causal weighting `exp(-2.0 * time_frac)` helped substantially, but a fixed decay rate may be too rigid. Let the network learn how fast to open the effective time horizon as the physics residual improves.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Add a strictly positive trainable scalar such as `self.causal_k = torch.nn.Parameter(torch.tensor([2.0]))`, then compute the causal factor as `exp(-abs(self.causal_k) * time_frac)`. This turns the successful causal prior into a learned schedule instead of a hand-tuned constant.
+
+- [ ] **HYP-12.4: Progressive R3 Retention Scaling**
+  - *Idea:* The winning R3 callback currently uses a fixed `retain_fraction = 0.20`, but the best exploration-exploitation tradeoff may change over training: lower retention early for discovery, higher retention late for refinement.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Modify `R3Resampler` so the retain fraction grows over time or curriculum stage, for example from `0.05` near the start to `0.40` near the end of the budget. This keeps the successful HYP-11.2 mechanism intact while making its aggressiveness adaptive.
+
+- [ ] **HYP-12.5: NTK-Approximated Loss Balancing via EMA Variance**
+  - *Idea:* Gradient pathologies between PDE channels remain a central PINN failure mode, and a full NTK calculation is too expensive here. A fast variance-based proxy could normalize the residual channels online and approximate dynamic scale balancing.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Instead of keeping loss weights statically at `[3.0, 3.0, 0.5]`, compute batch variances of `res_u` and `res_v`, maintain EMA estimates of those variances, and divide the PDE residual channels by their EMA standard deviation before returning them. This is a cheap dynamic balancing strategy aimed at equalizing gradient scales without the cost of a true NTK computation.
+
+- [ ] **HYP-12.6: Transolver-Inspired Spatial Tiling (Slice-Deslice)**
+  - *Idea:* Transolver-style tiling and local state extraction may help the network focus on the localized breather structure without forcing the first layer to learn all local context from raw coordinates alone.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Before feeding points into `MultiScaleFourierCore`, add a lightweight 1D spatial sliding-window feature extractor, for example a `torch.nn.Conv1d` path with circular padding over the periodic theta domain, then concatenate those local spatial descriptors with the standard coordinate and Fourier inputs. This is a Transolver-inspired local-physics feature path rather than full attention.
