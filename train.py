@@ -89,6 +89,8 @@ msffn_features_per_scale = 16
 breather_theta_harmonics = (1, 2, 3, 4, 5)
 breather_period_guess = 0.9990
 breather_time_harmonics = (1.0, 2.0)
+temporal_attention_width = 16
+temporal_attention_heads = 4
 curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
 curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
 curriculum_min_stage_steps = 1000
@@ -250,12 +252,28 @@ class MultiScaleFourierCore(torch.nn.Module):
                 dtype=torch.float32,
             ).view(1, -1),
         )
+        self.time_token_proj = torch.nn.Linear(2, temporal_attention_width)
+        self.time_attention = torch.nn.MultiheadAttention(
+            embed_dim=temporal_attention_width,
+            num_heads=temporal_attention_heads,
+            dropout=0.0,
+            batch_first=True,
+        )
+        self.time_attention_query = torch.nn.Parameter(
+            torch.zeros(1, 1, temporal_attention_width)
+        )
+        self.time_attention_norm = torch.nn.LayerNorm(temporal_attention_width)
+        self.time_attention_out = torch.nn.Linear(
+            temporal_attention_width,
+            temporal_attention_width,
+        )
 
         encoded_dim = (
             input_dim
             + 2 * self.features_per_scale * len(self.sigmas)
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
+            + temporal_attention_width
         )
         layer_dims = [encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
         layers = []
@@ -271,6 +289,15 @@ class MultiScaleFourierCore(torch.nn.Module):
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
+        torch.nn.init.xavier_uniform_(self.time_token_proj.weight)
+        torch.nn.init.zeros_(self.time_token_proj.bias)
+        torch.nn.init.xavier_uniform_(self.time_attention.in_proj_weight)
+        torch.nn.init.zeros_(self.time_attention.in_proj_bias)
+        torch.nn.init.xavier_uniform_(self.time_attention.out_proj.weight)
+        torch.nn.init.zeros_(self.time_attention.out_proj.bias)
+        torch.nn.init.xavier_uniform_(self.time_attention_out.weight)
+        torch.nn.init.zeros_(self.time_attention_out.bias)
+        torch.nn.init.normal_(self.time_attention_query, mean=0.0, std=0.02)
 
     def encode(self, x):
         encoded = [x]
@@ -286,10 +313,16 @@ class MultiScaleFourierCore(torch.nn.Module):
         time_omegas = self.det_time_omegas.to(device=x.device, dtype=x.dtype)
         theta_angles = 2.0 * math.pi * (theta - theta_origin) * theta_modes / theta_period
         time_angles = (time_coord - t0) * time_omegas
+        time_tokens = torch.stack((torch.sin(time_angles), torch.cos(time_angles)), dim=2)
+        time_tokens = self.time_token_proj(time_tokens)
+        time_query = self.time_attention_query.expand(x.shape[0], -1, -1)
+        time_context, _ = self.time_attention(time_query, time_tokens, time_tokens, need_weights=False)
+        time_context = self.time_attention_out(self.time_attention_norm(time_context[:, 0, :]))
         encoded.append(torch.sin(theta_angles))
         encoded.append(torch.cos(theta_angles))
         encoded.append(torch.sin(time_angles))
         encoded.append(torch.cos(time_angles))
+        encoded.append(time_context)
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
@@ -349,6 +382,11 @@ print(
     f"theta_modes={breather_theta_harmonics}, "
     f"time_period_guess={breather_period_guess:.4f}, "
     f"time_harmonics={breather_time_harmonics}"
+)
+print(
+    "[INFO] Temporal attention: "
+    f"width={temporal_attention_width}, "
+    f"heads={temporal_attention_heads}"
 )
 print(
     "[INFO] Global power prior: "
