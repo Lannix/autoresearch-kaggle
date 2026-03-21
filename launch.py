@@ -42,7 +42,7 @@ def run_cmd(cmd):
     if shutil.which("kaggle") is None:
         resolved_cmd = re.sub(
             r"^kaggle\b",
-            f'"{sys.executable}" -m kaggle.cli',
+            lambda _match: f'"{sys.executable}" -m kaggle.cli',
             cmd,
             count=1,
         )
