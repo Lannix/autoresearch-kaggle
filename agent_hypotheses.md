@@ -412,3 +412,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Keep the winning R3 timing, retain fraction, and causal scoring, but draw the resampled `80%` of points from a mildly late-time-biased distribution instead of the same early-time `Beta(1, 3)` used by the base anchors. This lets the retained hard points cover the early-time and causal-hot regions while the fresh points improve late-time breather coverage.
   - *Outcome:* [DISCARD] | *Delta:* [+2.395e-02 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, preserved the winning one-shot R3 timing, `20%` retain fraction, and causal residual scoring, but changed only the resampled `80%` of points to use a complementary late-time time bias `Beta(2.0, 1.5)` instead of the baseline early-time `Beta(1, 3)`. The callback fired cleanly at Adam step `5000`, peak VRAM stayed flat at `2133.1 MB`, and the PDE losses collapsed to extremely small values through L-BFGS, but validation regressed catastrophically from `3.376563e-02` to `5.771856e-02` with only `9394` total steps. That combination of tiny training loss and much worse `val_mse` suggests the late-time refresh distribution over-specialized the collocation set and broke the broad coverage that made the original causal R3 refresh effective.
+
+- [ ] **HYP-11.8: Richer Breather Time Harmonics**
+  - *Idea:* Keep the winning R3-plus-curriculum pipeline intact, but expand the deterministic breather-tuned time bank from `(1, 2)` to `(1, 2, 3)` so the model sees a slightly richer temporal prior without changing the random MsFFN scales or the collocation policy.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* ...
