@@ -184,6 +184,8 @@ class OptimizationConfig:
     lbfgs_inner_iters: int
     r3_period: int
     r3_retain_fraction: float
+    r3_max_retain_fraction: float
+    r3_retain_growth_per_refresh: float
     r3_score_batch_size: int
     loss_weights: tuple[float, float, float]
 
@@ -265,7 +267,9 @@ optimization_config = OptimizationConfig(
     lbfgs_total_iters=5000,
     lbfgs_inner_iters=250,
     r3_period=5000,
-    r3_retain_fraction=0.20,
+    r3_retain_fraction=0.10,
+    r3_max_retain_fraction=0.30,
+    r3_retain_growth_per_refresh=0.10,
     r3_score_batch_size=1024,
     loss_weights=(3.0, 3.0, 0.5),
 )
@@ -597,6 +601,12 @@ print(
     f"time_points={power_prior_config.time_count}, "
     f"late_start_frac={power_prior_config.start_frac:.2f}"
 )
+print(
+    "[INFO] Progressive R3 retention: "
+    f"start={optimization_config.r3_retain_fraction:.2f}, "
+    f"max={optimization_config.r3_max_retain_fraction:.2f}, "
+    f"growth={optimization_config.r3_retain_growth_per_refresh:.2f}"
+)
 
 def global_power_stabilization_loss(device, dtype):
     """
@@ -897,16 +907,22 @@ class R3Resampler(dde.callbacks.Callback):
     Periodically evaluates the current collocation points, discards those with low PDE error,
     and replaces them with newly sampled points to force the network to focus on harder regions.
     """
-    def __init__(self, period, retain_fraction, score_batch_size):
+    def __init__(self, period, retain_fraction, max_retain_fraction, retain_growth_per_refresh, score_batch_size):
         super().__init__()
         # period: training-step interval between possible R3 refreshes.
         self.period = int(period)
-        # retain_fraction: fraction of the hardest anchors kept during the refresh.
+        # retain_fraction: starting fraction of the hardest anchors kept during the first refresh.
         self.retain_fraction = float(retain_fraction)
+        # max_retain_fraction: upper limit for later, more exploitative R3 refreshes.
+        self.max_retain_fraction = float(max_retain_fraction)
+        # retain_growth_per_refresh: how much the keep fraction grows after each completed refresh.
+        self.retain_growth_per_refresh = float(retain_growth_per_refresh)
         # score_batch_size: mini-batch size used to evaluate residual scores.
         self.score_batch_size = int(score_batch_size)
         # has_updated: remembers whether the anchors were refreshed at least once.
         self.has_updated = False
+        # refresh_count: number of successful R3 updates already performed.
+        self.refresh_count = 0
 
     def on_epoch_end(self):
         if curriculum_time_upper < domain.t_max - 1e-6:
@@ -925,8 +941,13 @@ class R3Resampler(dde.callbacks.Callback):
         # Find points with highest PDE errors
         # residual_scores: one scalar difficulty score per active anchor.
         residual_scores = residual_scores_for_points(current_points, self.score_batch_size)
+        # current_retain_fraction: progressively shifts from exploration to exploitation.
+        current_retain_fraction = min(
+            self.max_retain_fraction,
+            self.retain_fraction + self.refresh_count * self.retain_growth_per_refresh,
+        )
         # retain_count: number of hardest anchors preserved during the refresh.
-        retain_count = max(1, int(round(current_points.shape[0] * self.retain_fraction)))
+        retain_count = max(1, int(round(current_points.shape[0] * current_retain_fraction)))
         # retain_indices: indices of the highest-scoring anchors.
         retain_indices = np.argpartition(residual_scores, -retain_count)[-retain_count:]
         
@@ -951,10 +972,12 @@ class R3Resampler(dde.callbacks.Callback):
         # Inject the refined points back into DeepXDE
         replace_model_anchors(self.model, updated_points, sync_train_state=True)
         self.has_updated = True
+        self.refresh_count += 1
 
         print(
             f"[INFO] R3 refresh at step {step}: retained {retain_count}/{current_points.shape[0]} "
             f"points ({100.0 * retain_count / current_points.shape[0]:.1f}%), "
+            f"retain_fraction={current_retain_fraction:.2f}, "
             f"retained_mean={float(retained_scores.mean()):.3e}, "
             f"retained_max={float(retained_scores.max()):.3e}"
         )
@@ -985,6 +1008,8 @@ curriculum_callback = TimeCurriculumScheduler(
 r3_callback = R3Resampler(
     period=optimization_config.r3_period,
     retain_fraction=optimization_config.r3_retain_fraction,
+    max_retain_fraction=optimization_config.r3_max_retain_fraction,
+    retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
 )
 
