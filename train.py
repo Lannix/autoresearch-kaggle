@@ -471,25 +471,11 @@ class MultiScaleFourierCore(torch.nn.Module):
             layers.append(torch.nn.Linear(in_dim, out_dim))
             layers.append(torch.nn.Tanh())
         layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
-        # attention_gate: lightweight "spectral attention" that scales each encoded feature
-        # based on the current normalized coordinate. This lets the model suppress
-        # unnecessary high-frequency channels in the CW background and emphasize them
-        # near the localized breather region.
-        self.attention_gate = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, 32),
-            torch.nn.Tanh(),
-            torch.nn.Linear(32, encoded_dim),
-            torch.nn.Sigmoid(),
-        )
         self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
     def reset_parameters(self):
         for module in self.network:
-            if isinstance(module, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                torch.nn.init.zeros_(module.bias)
-        for module in self.attention_gate:
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
@@ -522,9 +508,7 @@ class MultiScaleFourierCore(torch.nn.Module):
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
-        encoded = self.encode(x)
-        attention_weights = self.attention_gate(x)
-        return self.network(encoded * attention_weights)
+        return self.network(self.encode(x))
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -607,7 +591,6 @@ print(
     f"time_period_guess={feature_config.period_guess:.4f}, "
     f"time_harmonics={feature_config.time_harmonics}"
 )
-print("[INFO] Spectral attention: enabled, gate_hidden=32")
 print(
     "[INFO] Global power prior: "
     f"theta_points={power_prior_config.theta_count}, "
