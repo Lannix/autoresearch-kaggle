@@ -528,10 +528,23 @@ class NormalizedChainRuleNet(dde.nn.NN):
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
+        # causal_k: learnable decay rate for the causal PDE weighting exp(-k * time_frac).
+        # Initializing at 2.0 exactly matches the current kept baseline at step 0.
+        self.causal_k = torch.nn.Parameter(torch.tensor([2.0], dtype=torch.float32))
         # regularizer: DeepXDE compatibility field; unused in this script.
         self.regularizer = None
         # last_x_norm: cached normalized inputs used later for chain-rule derivatives.
         self.last_x_norm = None
+
+    def causal_decay(self, device=None, dtype=None):
+        """Returns a strictly positive causal-decay scalar used inside the PDE weighting."""
+        decay = torch.abs(self.causal_k)
+        if device is not None or dtype is not None:
+            decay = decay.to(
+                device=self.causal_k.device if device is None else device,
+                dtype=self.causal_k.dtype if dtype is None else dtype,
+            )
+        return torch.clamp(decay, min=1e-6)
 
     def normalize_inputs(self, x):
         # theta/time_coord: physical coordinates extracted from DeepXDE's [theta, time] input order.
@@ -590,6 +603,10 @@ print(
     f"theta_modes={feature_config.theta_harmonics}, "
     f"time_period_guess={feature_config.period_guess:.4f}, "
     f"time_harmonics={feature_config.time_harmonics}"
+)
+print(
+    "[INFO] Learnable causal annealing: "
+    f"enabled, initial_k={float(net.causal_decay().detach().cpu()):.4f}"
 )
 print(
     "[INFO] Global power prior: "
@@ -682,8 +699,10 @@ def compute_weighted_pde_residuals(x, y=None):
     # Causal weighting penalizes early-time errors more strictly than late-time errors
     # time_frac: physical time normalized into [0, 1].
     time_frac = (x[:, 1:2] - domain.t_min) / (domain.time_span + 1e-12)
+    # causal_decay: learned positive rate controlling how fast the effective time horizon opens.
+    causal_decay = net.causal_decay(device=x.device, dtype=x.dtype)
     # causal_weight: early-time emphasis factor applied to the PDE residual.
-    causal_weight = torch.exp(-2.0 * time_frac)
+    causal_weight = torch.exp(-causal_decay * time_frac)
     return causal_weight * res_u, causal_weight * res_v
 
 
@@ -1045,6 +1064,7 @@ try:
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
+    print(f"causal_k:         {float(net.causal_decay().detach().cpu()):.6f}")
     print("---")
 
 except Exception as e:
