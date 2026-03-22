@@ -461,35 +461,24 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
         )
-
-        # activation_gain: fixed multiplier `n` from the L-LAAF formulation tanh(n * a * x).
-        # With a initialized to 1 / n, training starts close to a normal tanh network.
-        self.activation_gain = 10.0
-
-        # Build the MLP head on top of the Fourier features.
-        # For HYP-12.2 we keep the same depth/width, but each hidden layer learns its own
-        # activation slope so the optimizer can recover sharper gradients when needed.
+        
+        # Build the standard MLP on top of the Fourier features
         # layer_dims: widths of every linear layer in the MLP head.
-        layer_dims = [encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
-        # hidden_layers: affine transforms used before each adaptive tanh activation.
-        self.hidden_layers = torch.nn.ModuleList()
-        # activation_scales: one learnable slope parameter `a` per hidden layer.
-        self.activation_scales = torch.nn.ParameterList()
+        layer_dims =[encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        # layers: Python list used to build the final torch.nn.Sequential block.
+        layers = []
         for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
-            self.hidden_layers.append(torch.nn.Linear(in_dim, out_dim))
-            self.activation_scales.append(
-                torch.nn.Parameter(torch.tensor(1.0 / self.activation_gain, dtype=torch.float32))
-            )
-        # output_layer: final linear map producing the real and imaginary corrections.
-        self.output_layer = torch.nn.Linear(layer_dims[-2], layer_dims[-1])
+            layers.append(torch.nn.Linear(in_dim, out_dim))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
+        self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
     def reset_parameters(self):
-        for module in [*self.hidden_layers, self.output_layer]:
-            torch.nn.init.xavier_uniform_(module.weight)
-            torch.nn.init.zeros_(module.bias)
-        for scale in self.activation_scales:
-            scale.data.fill_(1.0 / self.activation_gain)
+        for module in self.network:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -519,15 +508,7 @@ class MultiScaleFourierCore(torch.nn.Module):
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
-        # encoded: random + deterministic Fourier features for the current points.
-        encoded = self.encode(x)
-        # hidden: activations propagated through the adaptive-slope tanh stack.
-        hidden = encoded
-        for layer, scale in zip(self.hidden_layers, self.activation_scales):
-            # adaptive_scale: positive trainable slope multiplier for this layer.
-            adaptive_scale = self.activation_gain * torch.abs(scale)
-            hidden = torch.tanh(adaptive_scale * layer(hidden))
-        return self.output_layer(hidden)
+        return self.network(self.encode(x))
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -603,11 +584,6 @@ print(
     "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
     f"features_per_scale={feature_config.features_per_scale}"
-)
-print(
-    "[INFO] L-LAAF: "
-    f"enabled, gain={net.core.activation_gain:.1f}, "
-    f"init_scale={1.0 / net.core.activation_gain:.3f}"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
