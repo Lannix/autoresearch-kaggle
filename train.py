@@ -528,45 +528,10 @@ class NormalizedChainRuleNet(dde.nn.NN):
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
-        # ema_beta: smoothing factor for the running PDE-channel variance estimates.
-        self.ema_beta = 0.99
-        # ema_update_enabled: temporary switch used to freeze EMA updates during R3 scoring.
-        self.ema_update_enabled = True
-        # ema_res_*_var: running variance estimates used to normalize the raw PDE channels.
-        self.register_buffer("ema_res_u_var", torch.tensor(1.0, dtype=torch.float32))
-        self.register_buffer("ema_res_v_var", torch.tensor(1.0, dtype=torch.float32))
-        # ema_initialized: remembers whether the running statistics have seen a first batch yet.
-        self.register_buffer("ema_initialized", torch.tensor(False, dtype=torch.bool))
         # regularizer: DeepXDE compatibility field; unused in this script.
         self.regularizer = None
         # last_x_norm: cached normalized inputs used later for chain-rule derivatives.
         self.last_x_norm = None
-
-    def normalize_pde_channels(self, res_u, res_v, update_ema=None):
-        """
-        Normalizes the two PDE channels by running EMA standard deviations so one channel
-        cannot dominate purely because its raw scale is larger than the other.
-        """
-        if update_ema is None:
-            update_ema = bool(self.training and self.ema_update_enabled)
-
-        # current_*_var: detached mini-batch variances of the two raw PDE channels.
-        current_u_var = res_u.detach().float().square().mean().clamp_min(1e-8)
-        current_v_var = res_v.detach().float().square().mean().clamp_min(1e-8)
-
-        if update_ema:
-            if not bool(self.ema_initialized.item()):
-                self.ema_res_u_var.copy_(current_u_var)
-                self.ema_res_v_var.copy_(current_v_var)
-                self.ema_initialized.fill_(True)
-            else:
-                self.ema_res_u_var.mul_(self.ema_beta).add_(current_u_var, alpha=1.0 - self.ema_beta)
-                self.ema_res_v_var.mul_(self.ema_beta).add_(current_v_var, alpha=1.0 - self.ema_beta)
-
-        # scale_*: running standard deviations converted onto the current device/dtype.
-        scale_u = torch.sqrt(self.ema_res_u_var.to(device=res_u.device, dtype=res_u.dtype) + 1e-8)
-        scale_v = torch.sqrt(self.ema_res_v_var.to(device=res_v.device, dtype=res_v.dtype) + 1e-8)
-        return res_u / scale_u, res_v / scale_v
 
     def normalize_inputs(self, x):
         # theta/time_coord: physical coordinates extracted from DeepXDE's [theta, time] input order.
@@ -625,10 +590,6 @@ print(
     f"theta_modes={feature_config.theta_harmonics}, "
     f"time_period_guess={feature_config.period_guess:.4f}, "
     f"time_harmonics={feature_config.time_harmonics}"
-)
-print(
-    "[INFO] EMA PDE balancing: "
-    f"enabled, beta={net.ema_beta:.2f}"
 )
 print(
     "[INFO] Global power prior: "
@@ -717,16 +678,13 @@ def compute_weighted_pde_residuals(x, y=None):
     # res_u/res_v: real and imaginary PDE mismatches that training tries to drive to zero.
     res_u = du_dt - (-u + domain.zeta * v - 0.5 * dv_dth2 - intensity * v + domain.f)
     res_v = dv_dt - (-v - domain.zeta * u + 0.5 * du_dth2 + intensity * u)
-
-    # normalized_res_u/normalized_res_v: raw PDE channels balanced by EMA variance estimates.
-    normalized_res_u, normalized_res_v = net.normalize_pde_channels(res_u, res_v)
     
     # Causal weighting penalizes early-time errors more strictly than late-time errors
     # time_frac: physical time normalized into [0, 1].
     time_frac = (x[:, 1:2] - domain.t_min) / (domain.time_span + 1e-12)
     # causal_weight: early-time emphasis factor applied to the PDE residual.
     causal_weight = torch.exp(-2.0 * time_frac)
-    return causal_weight * normalized_res_u, causal_weight * normalized_res_v
+    return causal_weight * res_u, causal_weight * res_v
 
 
 def pde(x, y):
@@ -904,11 +862,8 @@ def residual_scores_for_points(points_np, batch_size):
     """Calculates the physical PDE error at a given batch of points without tracking gradients."""
     # original_requires_grad: remembers the current grad state of every parameter.
     original_requires_grad =[param.requires_grad for param in net.parameters()]
-    # original_ema_update_enabled: remembers whether PDE EMA balancing is allowed to update stats.
-    original_ema_update_enabled = net.ema_update_enabled
     for param in net.parameters():
         param.requires_grad_(False)
-    net.ema_update_enabled = False
 
     # scores: list of numpy chunks that will be concatenated into one score vector.
     scores =[]
@@ -932,7 +887,6 @@ def residual_scores_for_points(points_np, batch_size):
             del x_batch, weighted_res_u, weighted_res_v, score
         return np.concatenate(scores, axis=0)
     finally:
-        net.ema_update_enabled = original_ema_update_enabled
         for param, requires_grad in zip(net.parameters(), original_requires_grad):
             param.requires_grad_(requires_grad)
 
@@ -1091,8 +1045,6 @@ try:
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
-    print(f"ema_res_u_std:    {float(torch.sqrt(net.ema_res_u_var.detach().cpu() + 1e-8)):.6f}")
-    print(f"ema_res_v_std:    {float(torch.sqrt(net.ema_res_v_var.detach().cpu() + 1e-8)):.6f}")
     print("---")
 
 except Exception as e:
