@@ -1,6 +1,8 @@
 """
 Autoresearch PINN training script for LLE using DeepXDE.
-Contains internal time-management to guarantee final evaluation before Kaggle timeout.[DeepXDE Note for Beginners]:
+Contains internal time-management to guarantee final evaluation before Kaggle timeout.
+
+[DeepXDE Note for Beginners]:
 Physics-Informed Neural Networks (PINNs) don't just learn from data; they learn to satisfy 
 a governing differential equation (PDE). This script solves the 1D Lugiato-Lefever Equation (LLE).
 Instead of using standard DeepXDE syntax for Initial Conditions (IC) and Boundary Conditions (BC), 
@@ -19,6 +21,9 @@ import numpy as np
 import torch
 import deepxde as dde
 
+# TIME_BUDGET: total allowed wall-clock training time on Kaggle.
+# get_training_setup: loads PDE metadata and the exact initial-condition slice.
+# evaluate_mse: computes the hidden validation score after training finishes.
 from prepare import TIME_BUDGET, get_training_setup, evaluate_mse
 
 # ==========================================
@@ -26,36 +31,54 @@ from prepare import TIME_BUDGET, get_training_setup, evaluate_mse
 # ==========================================
 # Use float32 for speed on Kaggle T4 GPUs.
 dde.config.set_default_float("float32")
+# Fix all random generators so different experiments are comparable.
 dde.config.set_random_seed(42)
 
+# device: active PyTorch device for tensors and the neural network.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[INFO] Using device: {device}")
 if torch.cuda.is_available():
     print(f"[INFO] GPU Name: {torch.cuda.get_device_name(0)}")
 
+# t_start_training: wall-clock reference time used for time-budget control.
 t_start_training = time.time()
 
 # Load isolated training setup from prepare.py. 
 # This ensures we don't accidentally leak the interior ground truth dataset during training.
+# setup: safe metadata bundle containing domain bounds, PDE parameters, and the exact IC slice.
 setup = get_training_setup()
+# t_min/t_max: physical time interval of the PDE domain.
 t_min, t_max = setup["t_bounds"]
+# th_min/th_max: spatial theta interval of the periodic domain.
 th_min, th_max = setup["th_bounds"]
+# zeta: cavity detuning parameter in the LLE.
 zeta = setup["params"]["zeta"]
+# f: external pump / drive strength in the LLE.
 f = setup["params"]["f"]
 
+# ic: dictionary containing the exact initial-condition slice at t=t0.
 ic = setup["initial_conditions"]
+# t0: physical time where the exact initial condition is known.
 t0 = ic["t0"]
+# th0_arr: theta coordinates of the known initial-condition slice.
 th0_arr = ic["th0_arr"]
+# u0/v0: real and imaginary parts of the initial condition.
 u0 = ic["u0"]
 v0 = ic["v0"]
 
 # Extract grid info from initial conditions
+# theta_samples: flattened theta grid used for Fourier reconstruction.
 theta_samples = np.asarray(th0_arr, dtype=np.float64).reshape(-1)
+# u0_samples/v0_samples: flattened initial-condition values.
 u0_samples = np.asarray(u0, dtype=np.float64).reshape(-1)
 v0_samples = np.asarray(v0, dtype=np.float64).reshape(-1)
+# theta_step: approximate theta spacing of the IC grid.
 theta_step = float(np.median(np.diff(theta_samples)))
+# theta_period: full periodic length of the theta domain.
 theta_period = float(theta_step * theta_samples.size)
+# theta_origin: reference theta used by the Fourier series.
 theta_origin = float(theta_samples[0])
+# theta_peak: location of the strongest initial intensity peak.
 theta_peak = float(theta_samples[int(np.argmax(u0_samples**2 + v0_samples**2))])
 
 
@@ -65,7 +88,9 @@ def build_real_fourier_coeffs(values):
     This is used later to construct an analytical function that exactly reconstructs 
     the t=0 state, acting as a "Hard Constraint" for the PINN.
     """
+    # coeffs: complex FFT coefficients of the real-valued signal.
     coeffs = np.fft.rfft(values) / values.size
+    # cos_coeffs/sin_coeffs: real Fourier-series coefficients used for exact reconstruction.
     cos_coeffs = 2.0 * coeffs.real
     sin_coeffs = -2.0 * coeffs.imag
     cos_coeffs[0] = coeffs[0].real
@@ -76,8 +101,10 @@ def build_real_fourier_coeffs(values):
     return cos_coeffs.astype(np.float32), sin_coeffs.astype(np.float32)
 
 # Pre-calculate Fourier modes for exact IC reconstruction
+# u0_* / v0_*: Fourier coefficients of the exact initial condition.
 u0_cos_coeffs, u0_sin_coeffs = build_real_fourier_coeffs(u0_samples)
 v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
+# fourier_modes: integer mode indices 0,1,2,... for the Fourier series.
 fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
 
 # ==========================================
@@ -85,57 +112,88 @@ fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
 # ==========================================
 # [DeepXDE Note for Beginners]: We define the spatial (Interval) and temporal (TimeDomain) domains, 
 # then multiply them to get the spatio-temporal domain (GeometryXTime).
+# geom: 1D periodic spatial interval in theta.
 geom = dde.geometry.Interval(th_min, th_max)
+# timedomain: 1D time interval for the PDE.
 timedomain = dde.geometry.TimeDomain(t_min, t_max)
+# geomtime: full spatio-temporal domain object used by DeepXDE.
 geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
 # Normalization variables (Neural Networks learn best when inputs are roughly in [-1, 1])
+# theta_center/time_center: midpoint of each physical domain.
 theta_center = float((th_min + th_max) * 0.5)
+# theta_half_span/time_half_span: half-width of each domain, with epsilon for safety.
 theta_half_span = float((th_max - th_min) * 0.5 + 1e-12)
 time_center = float((t_min + t_max) * 0.5)
 time_half_span = float((t_max - t_min) * 0.5 + 1e-12)
+# theta_norm_scale/time_norm_scale: scale factors that map physical coordinates into [-1, 1].
 theta_norm_scale = float(1.0 / theta_half_span)
 time_norm_scale = float(1.0 / time_half_span)
 
 # Hyperparameters discovered by the autonomous swarm
+# num_domain_points: number of active PDE collocation points at one time.
 num_domain_points = 30000
+# gaussian_collocation_fraction: fraction of theta samples biased near the breather peak.
 gaussian_collocation_fraction = 0.80
+# gaussian_collocation_sigma: width of the Gaussian theta sampler.
 gaussian_collocation_sigma = 0.15 * (th_max - th_min)
+# time_bias_beta_a / time_bias_beta_b: parameters of the early-time-biased Beta sampler.
 time_bias_beta_a = 1.0
 time_bias_beta_b = 3.0
+# msffn_sigmas: random Fourier-feature scales used by the MsFFN-style encoder.
 msffn_sigmas = (1.0, 10.0)
+# msffn_features_per_scale: number of random projections per Fourier scale.
 msffn_features_per_scale = 16
+# breather_theta_harmonics: deterministic spatial modes added as a physics prior.
 breather_theta_harmonics = (1, 2, 3, 4, 5)
+# breather_period_guess: guessed oscillation period for deterministic time features.
 breather_period_guess = 0.9990
+# breather_time_harmonics: deterministic temporal harmonics added to the encoder.
 breather_time_harmonics = (1.0, 2.0)
+# curriculum_stage_upper_fracs: fractions of the full time window used by the curriculum.
 curriculum_stage_upper_fracs = (0.25, 0.50, 0.75, 1.00)
+# curriculum_stage_loss_thresholds: loss targets that unlock the next curriculum stage.
 curriculum_stage_loss_thresholds = (0.25, 0.10, 0.045)
+# curriculum_min_stage_steps: minimum number of logged steps per curriculum stage.
 curriculum_min_stage_steps = 1000
+# r3_period: training step where the R3 refresh is allowed to trigger.
 r3_period = 5000
+# r3_retain_fraction: fraction of hardest points kept during the R3 refresh.
 r3_retain_fraction = 0.20
+# r3_score_batch_size: batch size used to score PDE residuals for R3.
 r3_score_batch_size = 1024
 
 # ==========================================
 # 3. Neural Network Architecture
 # ==========================================
+# ic_fourier_cache: cached IC tensors keyed by device/dtype.
 ic_fourier_cache = {}
+# power_stabilization_cache: cached tensors for the nonlocal power prior.
 power_stabilization_cache = {}
+# power_stabilization_theta_count: number of theta samples in the power grid.
 power_stabilization_theta_count = 512
+# power_stabilization_time_count: number of late-time slices in the power grid.
 power_stabilization_time_count = 6
+# power_stabilization_start_frac: fraction of the time domain where the power prior begins.
 power_stabilization_start_frac = 0.80
+# curriculum_time_upper: current maximum time visible to the curriculum sampler.
 curriculum_time_upper = float(t_max)
 
 
 def get_ic_fourier_tensors(device, dtype):
     """Caches fourier tensors on the correct PyTorch device to avoid host-to-device bottlenecks."""
+    # key: unique identifier for a specific device/dtype combination.
     key = (device.type, device.index, str(dtype))
     if key not in ic_fourier_cache:
         ic_fourier_cache[key] = {
+            # modes: Fourier mode indices as a row vector.
             "modes": torch.as_tensor(fourier_modes, device=device, dtype=dtype).view(1, -1),
+            # u_cos/u_sin/v_cos/v_sin: exact IC coefficients on the target device.
             "u_cos": torch.as_tensor(u0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
             "u_sin": torch.as_tensor(u0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
             "v_cos": torch.as_tensor(v0_cos_coeffs, device=device, dtype=dtype).view(-1, 1),
             "v_sin": torch.as_tensor(v0_sin_coeffs, device=device, dtype=dtype).view(-1, 1),
+            # theta_origin/theta_period/two_pi/t0: scalar constants needed by the ansatz.
             "theta_origin": torch.tensor(theta_origin, device=device, dtype=dtype),
             "theta_period": torch.tensor(theta_period, device=device, dtype=dtype),
             "two_pi": torch.tensor(2.0 * math.pi, device=device, dtype=dtype),
@@ -146,7 +204,9 @@ def get_ic_fourier_tensors(device, dtype):
 
 def build_power_stabilization_grid(theta_count, time_count, time_upper=None):
     """Creates a regular grid to calculate the physical 'power conservation' prior."""
+    # time_upper: current curriculum-dependent upper time bound.
     time_upper = float(t_max if time_upper is None else time_upper)
+    # theta_points/time_points: 1D grids used to build the nonlocal power prior.
     theta_points = np.linspace(
         th_min, th_max, theta_count, endpoint=False, dtype=np.float32
     ).reshape(-1, 1)
@@ -155,27 +215,37 @@ def build_power_stabilization_grid(theta_count, time_count, time_upper=None):
         time_upper, time_count, dtype=np.float32
     ).reshape(-1, 1)
     
+    # theta_grid/time_grid: broadcasted 2D mesh over theta and time.
     theta_grid = np.tile(theta_points[None, :, :], (time_count, 1, 1))
     time_grid = np.tile(time_points[:, None, :], (1, theta_count, 1))
+    # points: flattened [theta, time] coordinates fed through the network.
     points = np.concatenate((theta_grid, time_grid), axis=2).reshape(-1, 2)
-    
+
+    # pair_times: all time slices except the first, used for finite differences.
     pair_times = time_points[1:]
+    # pair_weights: late-time emphasis weights for the power derivative penalty.
     pair_weights = ((pair_times - t_min) / (t_max - t_min + 1e-12)) ** 4.0
     return points.astype(np.float32), pair_weights.astype(np.float32)
 
 
 def get_power_stabilization_tensors(device, dtype, time_upper=None):
+    # time_upper: current curriculum-dependent upper time bound.
     time_upper = float(t_max if time_upper is None else time_upper)
+    # key: cache key that changes with device, dtype, or time horizon.
     key = (device.type, device.index, str(dtype), round(time_upper, 6))
     if key not in power_stabilization_cache:
+        # points/pair_weights: numpy arrays generated for the power prior.
         points, pair_weights = build_power_stabilization_grid(
             power_stabilization_theta_count,
             power_stabilization_time_count,
             time_upper=time_upper,
         )
         power_stabilization_cache[key] = {
+            # points: flattened evaluation coordinates for the power prior.
             "points": torch.as_tensor(points, device=device, dtype=dtype),
+            # pair_weights: weights applied to each finite-difference time pair.
             "pair_weights": torch.as_tensor(pair_weights, device=device, dtype=dtype),
+            # delta_t: spacing between consecutive time slices in the power grid.
             "delta_t": torch.tensor(
                 (1.0 - power_stabilization_start_frac) * (time_upper - t_min) / max(1, power_stabilization_time_count - 1),
                 device=device, dtype=dtype,
@@ -186,12 +256,15 @@ def get_power_stabilization_tensors(device, dtype, time_upper=None):
 
 def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
     """Analytically reconstructs the Initial Condition from the precomputed Fourier series."""
+    # theta_rel: theta measured relative to the Fourier reference origin.
     theta_rel = theta - coeffs["theta_origin"]
+    # angles: Fourier phases k * 2pi * (theta - origin) / period.
     angles = coeffs["two_pi"] * theta_rel * coeffs["modes"] / coeffs["theta_period"]
     return torch.cos(angles) @ cos_coeffs + torch.sin(angles) @ sin_coeffs
 
 
 def wrap_theta_to_domain(theta):
+    # domain_width: length of the periodic theta interval.
     domain_width = th_max - th_min
     return ((theta - th_min) % domain_width) + th_min
 
@@ -202,11 +275,14 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     This custom sampler biases the spatial points (Gaussian around the peak) and time points (Beta distribution) 
     to force the network to focus on the hardest regions.
     """
+    # time_upper: current curriculum-dependent time ceiling for sampling.
     time_upper = float(t_max if time_upper is None else time_upper)
+    # gaussian_count/uniform_count: split between peak-focused and global theta samples.
     gaussian_count = int(round(num_points * gaussian_collocation_fraction))
     uniform_count = num_points - gaussian_count
 
     # Spatially biased (focuses on the optical peak)
+    # theta_gaussian: theta samples concentrated near the current breather peak.
     theta_gaussian = np.random.normal(
         loc=theta_peak,
         scale=gaussian_collocation_sigma,
@@ -214,11 +290,14 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     ).astype(np.float32)
     theta_gaussian = wrap_theta_to_domain(theta_gaussian).astype(np.float32)
 
+    # theta_uniform: uniform theta samples that preserve global coverage.
     theta_uniform = np.random.uniform(th_min, th_max, size=(uniform_count, 1)).astype(np.float32)
+    # theta_samples_biased: final mixed theta pool after shuffling.
     theta_samples_biased = np.vstack((theta_gaussian, theta_uniform)).astype(np.float32)
     np.random.shuffle(theta_samples_biased)
 
     # Temporally biased (causality - focuses more on earlier times to propagate physics forward correctly)
+    # time_samples_biased: Beta-distributed times emphasizing the early transient.
     time_samples_biased = np.random.beta(
         time_bias_beta_a,
         time_bias_beta_b,
@@ -227,6 +306,7 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     time_samples_biased = (t_min + (time_upper - t_min) * time_samples_biased).astype(np.float32)
     np.random.shuffle(time_samples_biased)
 
+    # collocation_points: final [theta, time] anchors passed to DeepXDE.
     collocation_points = np.hstack((theta_samples_biased, time_samples_biased)).astype(np.float32)
     print(
         f"[INFO] {log_prefix} Gaussian-biased collocation: "
@@ -247,19 +327,25 @@ class MultiScaleFourierCore(torch.nn.Module):
     def __init__(self, input_dim=2, hidden_dim=128, num_hidden_layers=5, output_dim=2, 
                  sigmas=(1.0, 10.0), features_per_scale=16):
         super().__init__()
+        # sigmas: random Fourier-feature scales.
         self.sigmas = tuple(float(sigma) for sigma in sigmas)
+        # features_per_scale: number of random projections at each sigma.
         self.features_per_scale = int(features_per_scale)
+        # theta_harmonics/time_harmonics: deterministic breather-specific feature frequencies.
         self.theta_harmonics = tuple(int(mode) for mode in breather_theta_harmonics)
         self.time_harmonics = tuple(float(mode) for mode in breather_time_harmonics)
 
         for idx, sigma in enumerate(self.sigmas):
+            # projection: random matrix mapping inputs into Fourier angles.
             projection = torch.randn(self.features_per_scale, input_dim) * sigma
             self.register_buffer(f"projection_{idx}", projection)
 
+        # det_theta_modes: deterministic spatial harmonics added as prior knowledge.
         self.register_buffer(
             "det_theta_modes",
             torch.tensor(self.theta_harmonics, dtype=torch.float32).view(1, -1),
         )
+        # det_time_omegas: angular frequencies derived from the guessed breather period.
         self.register_buffer(
             "det_time_omegas",
             torch.tensor([(2.0 * math.pi / breather_period_guess) * mode for mode in self.time_harmonics],
@@ -267,6 +353,7 @@ class MultiScaleFourierCore(torch.nn.Module):
             ).view(1, -1),
         )
 
+        # encoded_dim: width of the concatenated feature vector after all encodings.
         encoded_dim = (
             input_dim
             + 2 * self.features_per_scale * len(self.sigmas)
@@ -275,7 +362,9 @@ class MultiScaleFourierCore(torch.nn.Module):
         )
         
         # Build the standard MLP on top of the Fourier features
+        # layer_dims: widths of every linear layer in the MLP head.
         layer_dims =[encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        # layers: Python list used to build the final torch.nn.Sequential block.
         layers = []
         for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
             layers.append(torch.nn.Linear(in_dim, out_dim))
@@ -291,18 +380,24 @@ class MultiScaleFourierCore(torch.nn.Module):
                 torch.nn.init.zeros_(module.bias)
 
     def encode(self, x):
+        # encoded: list of feature blocks that will be concatenated into one vector.
         encoded = [x]
         for idx in range(len(self.sigmas)):
+            # projection: one random Fourier projection matrix.
             projection = getattr(self, f"projection_{idx}")
+            # angles: Fourier phases produced by the random projection.
             angles = 2.0 * math.pi * (x @ projection.T)
             encoded.append(torch.sin(angles))
             encoded.append(torch.cos(angles))
 
+        # theta/time_coord: convert normalized inputs back to physical coordinates.
         theta = x[:, 0:1] / theta_norm_scale + theta_center
         time_coord = x[:, 1:2] / time_norm_scale + time_center
+        # theta_modes/time_omegas: deterministic harmonic tensors on the current device/dtype.
         theta_modes = self.det_theta_modes.to(device=x.device, dtype=x.dtype)
         time_omegas = self.det_time_omegas.to(device=x.device, dtype=x.dtype)
         
+        # theta_angles/time_angles: phases for the deterministic breather-tuned harmonics.
         theta_angles = 2.0 * math.pi * (theta - theta_origin) * theta_modes / theta_period
         time_angles = (time_coord - t0) * time_omegas
         encoded.append(torch.sin(theta_angles))
@@ -327,33 +422,44 @@ class NormalizedChainRuleNet(dde.nn.NN):
     """
     def __init__(self):
         super().__init__()
+        # core: MsFFN-style feature encoder followed by a standard MLP head.
         self.core = MultiScaleFourierCore(
             sigmas=msffn_sigmas,
             features_per_scale=msffn_features_per_scale,
         )
+        # regularizer: DeepXDE compatibility field; unused in this script.
         self.regularizer = None
+        # last_x_norm: cached normalized inputs used later for chain-rule derivatives.
         self.last_x_norm = None
 
     def normalize_inputs(self, x):
+        # theta/time_coord: physical coordinates extracted from DeepXDE's [theta, time] input order.
         theta = x[:, 0:1]
         time_coord = x[:, 1:2]
+        # theta_norm/time_norm: coordinates rescaled into the neural-network domain.
         theta_norm = (theta - theta_center) * theta_norm_scale
         time_norm = (time_coord - time_center) * time_norm_scale
         return torch.cat((theta_norm, time_norm), dim=1)
 
     def denormalize_inputs(self, x_norm):
+        # theta/time_coord: normalized coordinates mapped back to physical units.
         theta = x_norm[:, 0:1] / theta_norm_scale + theta_center
         time_coord = x_norm[:, 1:2] / time_norm_scale + time_center
         return theta, time_coord
 
     def forward_from_normalized(self, x_norm):
+        # raw: unconstrained network correction predicted in normalized space.
         raw = self.core(x_norm)
+        # theta/time_coord: physical coordinates needed by the hard-constraint ansatz.
         theta, time_coord = self.denormalize_inputs(x_norm)
+        # coeffs: cached Fourier tensors for exact IC reconstruction.
         coeffs = get_ic_fourier_tensors(x_norm.device, x_norm.dtype)
         
         # Hard IC Ansatz
+        # u_exact/v_exact: exact real and imaginary initial-condition signals.
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
+        # growth: time gate that is zero at t=t0 and gradually unlocks the NN correction.
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
         return torch.cat((u_exact, v_exact), dim=1) + growth * raw
 
@@ -364,7 +470,9 @@ class NormalizedChainRuleNet(dde.nn.NN):
 
 
 net = NormalizedChainRuleNet()
+# curriculum_time_upper: first curriculum stage before training begins.
 curriculum_time_upper = t_min + curriculum_stage_upper_fracs[0] * (t_max - t_min)
+# custom_collocation_points: first batch of PDE anchors injected into DeepXDE.
 custom_collocation_points = build_gaussian_biased_collocation_points(
     num_domain_points,
     time_upper=curriculum_time_upper,
@@ -395,11 +503,15 @@ def global_power_stabilization_loss(device, dtype):
     should change consistently over time according to the physics. 
     This operates entirely separate from the collocation points.
     """
+    # tensors: cached coordinates, weights, and time spacing for the power prior.
     tensors = get_power_stabilization_tensors(device, dtype, time_upper=curriculum_time_upper)
+    # uv: model prediction evaluated on the nonlocal power grid.
     uv = net.forward_from_normalized(net.normalize_inputs(tensors["points"]))
+    # intensity: local field power |psi|^2 = u^2 + v^2.
     intensity = uv[:, 0:1].square() + uv[:, 1:2].square()
     
     # Integrate power over spatial domain
+    # power_by_time: estimated total cavity power for each sampled late-time slice.
     power_by_time = intensity.view(
         power_stabilization_time_count,
         power_stabilization_theta_count,
@@ -407,6 +519,7 @@ def global_power_stabilization_loss(device, dtype):
     ).mean(dim=1) * theta_period
     
     # Calculate difference over time (derivative of power)
+    # power_dt: finite-difference estimate of how total power changes over time.
     power_dt = (power_by_time[1:] - power_by_time[:-1]) / (tensors["delta_t"] + 1e-12)
     return tensors["pair_weights"] * power_dt
 
@@ -421,14 +534,17 @@ def compute_weighted_pde_residuals(x, y=None):
     derivatives with respect to `x_norm`. To get the true physical derivatives (du/dx), we must multiply
     by the scaling factors via the Chain Rule!
     """
+    # x_norm: normalized coordinates used internally by the network.
     x_norm = net.last_x_norm
     if y is None or x_norm is None or x_norm.shape[0] != x.shape[0]:
         x_norm = net.normalize_inputs(x)
         y = net.forward_from_normalized(x_norm)
 
+    # u/v: predicted real and imaginary fields at the requested points.
     u, v = y[:, 0:1], y[:, 1:2]
 
     # First derivatives
+    # grad_u_norm/grad_v_norm: first derivatives with respect to normalized coordinates.
     grad_u_norm = torch.autograd.grad(
         u, x_norm, grad_outputs=torch.ones_like(u), create_graph=True, retain_graph=True,
     )[0]
@@ -437,6 +553,7 @@ def compute_weighted_pde_residuals(x, y=None):
     )[0]
 
     # Second spatial derivatives (needed for the diffusion term)
+    # du_dth2_norm/dv_dth2_norm: second theta-derivatives in normalized coordinates.
     du_dth2_norm = torch.autograd.grad(
         grad_u_norm[:, 0:1], x_norm, grad_outputs=torch.ones_like(grad_u_norm[:, 0:1]),
         create_graph=True, retain_graph=True,
@@ -447,18 +564,24 @@ def compute_weighted_pde_residuals(x, y=None):
     )[0][:, 0:1]
 
     # Chain rule scaling to convert back to physical domain derivatives
+    # du_dt/dv_dt: true time derivatives in physical coordinates.
     du_dt = grad_u_norm[:, 1:2] * time_norm_scale
     dv_dt = grad_v_norm[:, 1:2] * time_norm_scale
+    # du_dth2/dv_dth2: true second theta-derivatives in physical coordinates.
     du_dth2 = du_dth2_norm * (theta_norm_scale ** 2)
     dv_dth2 = dv_dth2_norm * (theta_norm_scale ** 2)
 
     # The actual physical residuals of the Lugiato-Lefever Equation (LLE)
+    # intensity: local optical intensity |psi|^2.
     intensity = u.square() + v.square()
+    # res_u/res_v: real and imaginary PDE mismatches that training tries to drive to zero.
     res_u = du_dt - (-u + zeta * v - 0.5 * dv_dth2 - intensity * v + f)
     res_v = dv_dt - (-v - zeta * u + 0.5 * du_dth2 + intensity * u)
     
     # Causal weighting penalizes early-time errors more strictly than late-time errors
+    # time_frac: physical time normalized into [0, 1].
     time_frac = (x[:, 1:2] - t_min) / (t_max - t_min + 1e-12)
+    # causal_weight: early-time emphasis factor applied to the PDE residual.
     causal_weight = torch.exp(-2.0 * time_frac)
     return causal_weight * res_u, causal_weight * res_v
 
@@ -469,7 +592,9 @@ def pde(x, y):
     It expects lists of PDE residuals. The DeepXDE optimizer will try to drive all returned
     residuals to zero.
     """
+    # weighted_res_u/weighted_res_v: pointwise PDE residual channels.
     weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x, y)
+    # power_stabilization: extra nonlocal prior that stabilizes late-time dynamics.
     power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
     return[weighted_res_u, weighted_res_v, power_stabilization]
 
@@ -486,15 +611,21 @@ data = dde.data.TimePDE(
     num_initial=0,
     anchors=custom_collocation_points,
 )
+# model: central DeepXDE object that combines the dataset and the neural network.
 model = dde.Model(data, net)
 
 # ==========================================
 # 6. Training Setup
 # ==========================================
-EVAL_RESERVE = 45  
+# EVAL_RESERVE: seconds held back for final evaluation and reporting.
+EVAL_RESERVE = 45
+# max_train_time: time actually available for Adam + L-BFGS.
 max_train_time = TIME_BUDGET - EVAL_RESERVE
+# adam_time_limit: fraction of the budget reserved for Adam exploration.
 adam_time_limit = max_train_time * 0.60
+# lbfgs_total_iters: total L-BFGS iterations allowed by DeepXDE.
 lbfgs_total_iters = 5000
+# lbfgs_inner_iters: inner PyTorch L-BFGS loop length before callbacks get control back.
 lbfgs_inner_iters = 250
 
 print(f"[INFO] Starting training. Total budget: {TIME_BUDGET}s. Reserved for eval: {EVAL_RESERVE}s.")
@@ -507,7 +638,9 @@ class TimeBasedEarlyStopping(dde.callbacks.Callback):
     """
     def __init__(self, max_duration):
         super().__init__()
+        # max_duration: allowed training time in seconds for this phase.
         self.max_duration = max_duration
+        # start_time: timestamp used to compute elapsed wall-clock time.
         self.start_time = time.time()
         
     def on_epoch_end(self):
@@ -522,13 +655,19 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
     """
     def __init__(self, stage_upper_fracs, stage_loss_thresholds, min_stage_steps=1000):
         super().__init__()
+        # stage_upper_fracs: fractions of the full time domain visible at each stage.
         self.stage_upper_fracs = tuple(float(v) for v in stage_upper_fracs)
+        # stage_loss_thresholds: total-loss cutoffs that unlock the next stage.
         self.stage_loss_thresholds = tuple(float(v) for v in stage_loss_thresholds)
+        # min_stage_steps: minimum logged steps before a stage change is allowed.
         self.min_stage_steps = int(min_stage_steps)
 
     def on_train_begin(self):
+        # stage_index: current curriculum stage number.
         self.stage_index = 0
+        # last_seen_logged_step: prevents duplicate processing of the same logged step.
         self.last_seen_logged_step = -1
+        # stage_start_step: step where the current stage began.
         self.stage_start_step = 0
         self.apply_stage(self.stage_index)
 
@@ -538,6 +677,7 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
         if not self.model.losshistory.steps:
             return
 
+        # step: latest logged DeepXDE step.
         step = int(self.model.losshistory.steps[-1])
         if step == self.last_seen_logged_step:
             return
@@ -546,8 +686,11 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
         if step - self.stage_start_step < self.min_stage_steps:
             return
 
+        # loss_train: latest vector of loss channels logged by DeepXDE.
         loss_train = self.model.losshistory.loss_train[-1]
+        # total_loss: scalar used to decide whether the current stage is ready to expand.
         total_loss = float(np.sum(loss_train))
+        # threshold: stage-specific target loss.
         threshold = self.stage_loss_thresholds[self.stage_index]
         if total_loss > threshold:
             return
@@ -558,10 +701,12 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
 
     def apply_stage(self, stage_index):
         global curriculum_time_upper
+        # stage_frac: fraction of the full time window visible at this stage.
         stage_frac = self.stage_upper_fracs[stage_index]
         curriculum_time_upper = t_min + stage_frac * (t_max - t_min)
         
         # Build new points encompassing the extended time domain
+        # new_anchors: fresh PDE anchors spanning the expanded time window.
         new_anchors = build_gaussian_biased_collocation_points(
             num_domain_points,
             time_upper=curriculum_time_upper,
@@ -592,6 +737,7 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
     it globally via its `config` settings object.
     """
     dde.optimizers.config.set_LBFGS_options(maxiter=total_iters)
+    # lbfgs_options: DeepXDE's global dictionary for PyTorch L-BFGS settings.
     lbfgs_options = dde.optimizers.config.LBFGS_options
     inner_iters = min(inner_iters, total_iters)
     lbfgs_options["iter_per_step"] = inner_iters
@@ -603,20 +749,26 @@ def configure_pytorch_lbfgs(total_iters, inner_iters):
 
 def residual_scores_for_points(points_np, batch_size):
     """Calculates the physical PDE error at a given batch of points without tracking gradients."""
+    # original_requires_grad: remembers the current grad state of every parameter.
     original_requires_grad =[param.requires_grad for param in net.parameters()]
     for param in net.parameters():
         param.requires_grad_(False)
 
+    # scores: list of numpy chunks that will be concatenated into one score vector.
     scores =[]
     try:
         for start in range(0, points_np.shape[0], batch_size):
+            # stop: exclusive end index of this mini-batch.
             stop = start + batch_size
+            # x_batch: current mini-batch of points as a differentiable torch tensor.
             x_batch = torch.tensor(
                 points_np[start:stop],
                 device=device,
                 dtype=torch.float32,
             ).requires_grad_(True)
+            # weighted_res_u/weighted_res_v: PDE residual channels on this mini-batch.
             weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x_batch)
+            # score: single residual magnitude per point used for R3 ranking.
             score = torch.sqrt(
                 weighted_res_u[:, 0].square() + weighted_res_v[:, 0].square() + 1e-12
             )
@@ -636,38 +788,52 @@ class R3Resampler(dde.callbacks.Callback):
     """
     def __init__(self, period, retain_fraction, score_batch_size):
         super().__init__()
+        # period: training-step interval between possible R3 refreshes.
         self.period = int(period)
+        # retain_fraction: fraction of the hardest anchors kept during the refresh.
         self.retain_fraction = float(retain_fraction)
+        # score_batch_size: mini-batch size used to evaluate residual scores.
         self.score_batch_size = int(score_batch_size)
+        # has_updated: remembers whether the anchors were refreshed at least once.
         self.has_updated = False
 
     def on_epoch_end(self):
         if curriculum_time_upper < t_max - 1e-6:
             return
 
+        # step: current DeepXDE optimization step.
         step = int(self.model.train_state.step)
         if step == 0 or step % self.period != 0:
             return
 
+        # current_points: active collocation anchors currently stored in DeepXDE.
         current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
         if current_points.shape[0] == 0:
             return
 
         # Find points with highest PDE errors
+        # residual_scores: one scalar difficulty score per active anchor.
         residual_scores = residual_scores_for_points(current_points, self.score_batch_size)
+        # retain_count: number of hardest anchors preserved during the refresh.
         retain_count = max(1, int(round(current_points.shape[0] * self.retain_fraction)))
+        # retain_indices: indices of the highest-scoring anchors.
         retain_indices = np.argpartition(residual_scores, -retain_count)[-retain_count:]
         
+        # retained_points: hardest anchors kept from the current set.
         retained_points = current_points[retain_indices].astype(np.float32)
+        # retained_scores: their residual scores, used for logging.
         retained_scores = residual_scores[retain_indices]
 
         # Generate fresh replacement points
+        # resampled_count: number of anchors replaced with new samples.
         resampled_count = current_points.shape[0] - retain_count
+        # refreshed_points: new anchors sampled from the winning biased sampler.
         refreshed_points = build_gaussian_biased_collocation_points(
             resampled_count,
             time_upper=curriculum_time_upper,
             log_prefix=f"R3 refresh step {step}",
         )
+        # updated_points: final anchor set after retain + resample.
         updated_points = np.vstack((retained_points, refreshed_points)).astype(np.float32)
         np.random.shuffle(updated_points)
 
@@ -695,6 +861,7 @@ class R3Resampler(dde.callbacks.Callback):
 def model_uv(t_in, th_in, need_x=False):
     """Helper formatting output wrapper strictly used by `prepare.evaluate_mse`."""
     # DeepXDE inputs are concatenated [theta, time]
+    # x: coordinates packed in the exact order expected by the network.
     x = torch.cat((th_in, t_in), dim=1)
     if need_x:
         x = x.requires_grad_(True)
@@ -704,12 +871,15 @@ def model_uv(t_in, th_in, need_x=False):
     return uv[:, 0:1], uv[:, 1:2], x
 
 # Loss weights order corresponds directly to [res_u, res_v, power_stabilization] returned by `pde`.
+# loss_weights: relative importance of real PDE, imaginary PDE, and power prior losses.
 loss_weights =[3.0, 3.0, 0.5]
+# curriculum_callback: expands the visible time horizon as training improves.
 curriculum_callback = TimeCurriculumScheduler(
     stage_upper_fracs=curriculum_stage_upper_fracs,
     stage_loss_thresholds=curriculum_stage_loss_thresholds,
     min_stage_steps=curriculum_min_stage_steps,
 )
+# r3_callback: retains hard points and resamples easier ones during Adam.
 r3_callback = R3Resampler(
     period=r3_period,
     retain_fraction=r3_retain_fraction,
@@ -718,10 +888,13 @@ r3_callback = R3Resampler(
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
+# time_callback_adam: hard wall-clock stop for the Adam phase.
 time_callback_adam = TimeBasedEarlyStopping(adam_time_limit)
 
 try:
     print("\n[INFO] Phase 1: Adam optimization")
+    # losshistory: DeepXDE object storing the logged loss values.
+    # train_state: DeepXDE object storing the latest training step and state.
     losshistory, train_state = model.train(
         iterations=100000,
         callbacks=[time_callback_adam, curriculum_callback, r3_callback],
@@ -730,6 +903,7 @@ try:
     
     # Phase 2: L-BFGS uses a Hessian approximation to polish the physics solution precisely to zero
     print("\n[INFO] Phase 2: L-BFGS optimization")
+    # time_callback_lbfgs: hard wall-clock stop for the L-BFGS phase.
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # Base it on total elapsed time overall
     curriculum_callback.set_final_stage(preserve_current_anchors=r3_callback.has_updated)
@@ -743,6 +917,7 @@ try:
         display_every=10,
     )
     
+    # total_training_time: elapsed time spent in Adam + L-BFGS before final evaluation.
     total_training_time = time.time() - t_start_training
 
     # ==========================================
@@ -752,8 +927,11 @@ try:
     
     # Isolate training grid from ground truth evaluation
     net.eval()
+    # val_mse: hidden validation metric used to rank experiments.
     val_mse = evaluate_mse(model_uv, device, dtype=torch.float32)
+    # peak_vram_mb: maximum GPU memory allocated during the run.
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else 0.0
+    # num_params: total number of trainable parameters in the network.
     num_params = sum(p.numel() for p in net.parameters())
 
     print("\n---")
