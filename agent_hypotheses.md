@@ -438,10 +438,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+3.589e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, left the R3 resampler, curriculum schedule, Gaussian-beta anchor policy, and MsFFN random scales unchanged, and only expanded the deterministic breather-tuned time harmonics from `(1, 2)` to `(1, 2, 3)`. Kaggle T4 stayed stable, total progress remained healthy at `9516` steps, and the extra harmonic only modestly increased parameter count to `76930` and peak VRAM to `2136.9 MB`, but final `val_mse` still regressed from `3.376563e-02` to `3.735495e-02`. The weaker retained residual scores during R3 (`retained_mean = 1.637e-01` versus `1.859e-01` for the winner) suggest the added temporal prior made the representation a bit too diffuse rather than sharpening the useful breather structure.
 
-- [ ] **HYP-11.9: More Frequent Full-Domain R3 Refresh**
+- [x] **HYP-11.9: More Frequent Full-Domain R3 Refresh**
   - *Idea:* Keep the winning HYP-11.2 R3 mechanism and retention fraction, but shorten the refresh period so slower models still get at least one full-domain R3 update before Adam hands off to L-BFGS.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Starting from the kept HYP-11.2 baseline, reduce the R3 period from `5000` to `2000` while leaving the `20%` retain fraction, causal residual scoring, Gaussian-plus-uniform theta sampler, and `Beta(1, 3)` time bias unchanged. This should trigger refreshes at steps `4000`, `6000`, ... once the curriculum has reached the full time horizon, instead of occasionally missing R3 entirely on slower architectures.
+  - *Outcome:* [DISCARD] | *Delta:* [+3.842e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-11.2 baseline, reduced the R3 period from `5000` to `2000` while leaving the `20%` retain fraction, causal residual scoring, Gaussian-plus-uniform theta sampler, and `Beta(1, 3)` time bias unchanged. On Kaggle T4 this did exactly what it was supposed to do operationally: once the curriculum reached the full time horizon at step `4000`, R3 fired immediately and retained the top `6000 / 30000` anchors with `retained_mean = 2.395e-01` and `retained_max = 1.326e+00`. However, Adam effectively ended around step `5000`, so the more frequent schedule still only yielded one refresh in practice, just earlier than the winning baseline, and final `val_mse` regressed from `3.376563e-02` to `3.760736e-02` with unchanged peak VRAM at `2133.1 MB`. This matches the earlier HYP-11.4 signal that refreshing too early hurts more than it helps.
 
 ## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
 
