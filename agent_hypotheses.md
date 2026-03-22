@@ -380,10 +380,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Starting from the kept MsFFN baseline, add an explicit Hessian-friendly linear-attention block right after the encoded Fourier feature bank, using `Q = x W_q`, `K = x W_k`, `V = x W_v`, `attn = K^T V`, and `out = Q attn`. This keeps the operator strictly $O(N \cdot d^2)$, avoids PyTorch fused SDPA entirely, and is a direct Transolver-style retry after the HYP-10.1 crash history.
 
-- [ ] **HYP-10.5: Frequency-Domain Self-Gating (Spectral Attention)**
+- [x] **HYP-10.5: Frequency-Domain Self-Gating (Spectral Attention)**
   - *Idea:* Breathers have a flat Continuous Wave (CW) background and a sharp localized peak. Instead of attending to other *points*, attend to the *frequencies* by learning per-feature gates for the encoded Fourier bank.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* In `MultiScaleFourierCore`, keep `freq_features = self.encode(x)` and add a lightweight gate network `gate_net(x) -> [0, 1]^{encoded_dim}` so `attended_features = freq_features * gate_net(x)`. This is the most L-BFGS-friendly attention candidate because it adds only a small MLP, avoids pointwise softmax Hessians, and lets the model suppress high-frequency modes in the flat CW background while preserving them near the breather peak.
+  - *Outcome:* [DISCARD] | *Delta:* [+2.591e-03 val_mse regression]
+  - *Notes:* Starting from the kept HYP-11.2 baseline, kept the exact hard-IC ansatz, curriculum, one-shot R3 refresh, Gaussian-plus-uniform theta sampler, and late-time global-power prior unchanged, and only inserted a lightweight spectral-attention gate into `MultiScaleFourierCore`: the normalized `(theta, t)` input is passed through a tiny `2 -> 32 -> encoded_dim` `tanh`/`sigmoid` MLP that scales each encoded Fourier feature before the main five-layer `tanh` head. Kaggle T4 stayed fully stable, the gate avoided any higher-order autograd issues, and R3 still fired on schedule at step `5000`, but final `val_mse` regressed from `3.376563e-02` to `3.635723e-02`, peak VRAM rose to `2423.1 MB`, total progress dropped to `8492` steps, and the parameter count increased to `79410`, so this feature-wise attention was too costly for the current budget without improving generalization.
 
 - [ ] **HYP-10.6: Cross-Attention to the Exact Initial Condition**
   - *Idea:* PINN temporal evolution can fail because the network gradually forgets the initial state. We already have the exact Fourier representation of the IC in memory, so use the current physical coordinates as queries and the fixed IC Fourier coefficients as keys and values.
