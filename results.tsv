@@ -79,3 +79,4 @@ bf2a943	3.635723e-02	2.37	DISCARD	HYP-10.5 spectral attention gate
 6e0d913	6.153584e-02	2.59	DISCARD	HYP-12.2 L-LAAF core
 364dd55	4.137271e-02	2.08	DISCARD	HYP-12.3 learnable causal annealing
 e9a45ff	3.408787e-02	2.60	DISCARD	HYP-10.7 factorized space-time gating
+df2dd1e	6.130872e-02	2.08	DISCARD	HYP-12.5 EMA PDE balancing

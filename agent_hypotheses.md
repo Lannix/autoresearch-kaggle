@@ -465,10 +465,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Modify `R3Resampler` so the retain fraction grows over time or curriculum stage, for example from `0.05` near the start to `0.40` near the end of the budget. This keeps the successful HYP-11.2 mechanism intact while making its aggressiveness adaptive.
 
-- [ ] **HYP-12.5: NTK-Approximated Loss Balancing via EMA Variance**
+- [x] **HYP-12.5: NTK-Approximated Loss Balancing via EMA Variance** [DISCARD]
   - *Idea:* Gradient pathologies between PDE channels remain a central PINN failure mode, and a full NTK calculation is too expensive here. A fast variance-based proxy could normalize the residual channels online and approximate dynamic scale balancing.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Instead of keeping loss weights statically at `[3.0, 3.0, 0.5]`, compute batch variances of `res_u` and `res_v`, maintain EMA estimates of those variances, and divide the PDE residual channels by their EMA standard deviation before returning them. This is a cheap dynamic balancing strategy aimed at equalizing gradient scales without the cost of a true NTK computation.
+  - *Outcome:* `DISCARD` | *Delta:* `+2.754309e-02 val_mse regression`
+  - *Notes:* Added running EMA variance trackers to `NormalizedChainRuleNet`, normalized the raw `res_u` and `res_v` channels by their EMA standard deviations before applying the usual causal weight, and froze those EMA statistics during R3 residual scoring so the ranking path stayed deterministic. The run stayed numerically stable and kept VRAM flat, but it broke the training dynamics badly: Adam never satisfied the stage-2/stage-3 curriculum thresholds, so the model remained on the short time horizon until `set_final_stage(...)` forced the full domain right before L-BFGS. That meant the usual step-`5000` R3 refresh never fired, the final `val_mse` regressed to `6.130872e-02`, and the whole run finished early at only `5985` total steps. The EMA channel scales themselves converged to similar values (`u_std=0.245835`, `v_std=0.227777`), so the balancing did equalize magnitudes, but it also made the curriculum thresholds miscalibrated for this project.
 
 - [ ] **HYP-12.6: Transolver-Inspired Spatial Tiling (Slice-Deslice)**
   - *Idea:* Transolver-style tiling and local state extraction may help the network focus on the localized breather structure without forcing the first layer to learn all local context from raw coordinates alone.
