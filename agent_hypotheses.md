@@ -450,10 +450,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Starting from the current `MultiScaleFourierCore`, replace the standard `nn.Linear + nn.Tanh()` stack with a lightweight KAN-style layer implemented locally, for example by adding a parallel trainable Fourier projection or localized RBF branch per layer so each neuron can adapt its activation landscape without pulling in a heavy external KAN dependency.
 
-- [ ] **HYP-12.2: L-LAAF (Layer-wise Locally Adaptive Activation Functions)**
+- [x] **HYP-12.2: L-LAAF (Layer-wise Locally Adaptive Activation Functions)** [DISCARD]
   - *Idea:* DeepXDE guidance and recent PINN papers suggest L-LAAF can recover slopes and accelerate convergence by letting each layer scale its own activation steepness instead of relying on a fixed `tanh`.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Inside `MultiScaleFourierCore`, replace the fixed activation with `tanh(n * a * x)` where `n = 10` is constant and each layer owns a trainable scalar `a` initialized to `1 / n`. This is a cheap architectural change that directly targets the slope-recovery problem without adding depth or much memory.
+  - *Outcome:* `DISCARD` | *Delta:* `+2.777021e-02 val_mse regression`
+  - *Notes:* Replaced the fixed hidden `tanh` stack inside `MultiScaleFourierCore` with per-layer L-LAAF activations `tanh(10 * |a| * x)`, initializing every trainable slope at `0.1` so the model started near the baseline MsFFN behavior. The run was numerically stable and still reached the normal curriculum and one-shot R3 refresh at step `5000`, but both Adam and L-BFGS converged much more poorly: `val_mse` regressed to `6.153584e-02`, `peak_vram_mb` rose to `2650.3`, and total progress fell to `8360` steps, so the adaptive slopes appear to have made the loss landscape harder rather than easier for this LLE setup.
 
 - [ ] **HYP-12.3: Learnable Causal Annealing**
   - *Idea:* The current causal weighting `exp(-2.0 * time_frac)` helped substantially, but a fixed decay rate may be too rigid. Let the network learn how fast to open the effective time horizon as the physics residual improves.
