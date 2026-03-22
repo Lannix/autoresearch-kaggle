@@ -460,10 +460,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* `DISCARD` | *Delta:* `+7.607080e-03 val_mse regression`
   - *Notes:* Added a trainable scalar `causal_k` to `NormalizedChainRuleNet`, initialized at the successful baseline value `2.0`, and replaced the fixed PDE weighting with `exp(-abs(causal_k) * time_frac)` while logging the learned rate at the end of training. The run stayed fully stable, kept the normal curriculum schedule, and still hit the one-shot R3 refresh at step `5000`, but validation regressed to `4.137271e-02` even though the training loss became extremely small. The learned decay exploded to `causal_k = 10.135709`, which strongly suggests the model exploited the extra freedom by over-focusing on the earliest times and under-training the later breather dynamics.
 
-- [ ] **HYP-12.4: Progressive R3 Retention Scaling**
+- [x] **HYP-12.4: Progressive R3 Retention Scaling** [KEEP]
   - *Idea:* The winning R3 callback currently uses a fixed `retain_fraction = 0.20`, but the best exploration-exploitation tradeoff may change over training: lower retention early for discovery, higher retention late for refinement.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Modify `R3Resampler` so the retain fraction grows over time or curriculum stage, for example from `0.05` near the start to `0.40` near the end of the budget. This keeps the successful HYP-11.2 mechanism intact while making its aggressiveness adaptive.
+  - *Outcome:* `KEEP` | *Delta:* `-5.286700e-04 val_mse improvement`
+  - *Notes:* Implemented a progressive R3 schedule inside `R3Resampler`: the keep fraction now starts at `0.10`, grows by `0.10` after each completed refresh, and caps at `0.30`. Under the current time budget only one R3 event still fires, so this experiment effectively tests a much more exploratory first refresh while preserving the option to become more exploitative in future slower runs. The run stayed fully stable, the usual curriculum still reached the full domain by step `4000`, and the one-shot R3 refresh at step `5000` kept only `3000/30000` hardest anchors before resampling the other `90%`. That improved `val_mse` from `3.376563e-02` to `3.323696e-02` with unchanged peak VRAM (`2133.1 MB`) and healthy progress (`9483` steps), so the current best model benefits from a more aggressive single full-domain R3 update.
 
 - [x] **HYP-12.5: NTK-Approximated Loss Balancing via EMA Variance** [DISCARD]
   - *Idea:* Gradient pathologies between PDE channels remain a central PINN failure mode, and a full NTK calculation is too expensive here. A fast variance-based proxy could normalize the residual channels online and approximate dynamic scale balancing.

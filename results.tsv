@@ -81,3 +81,4 @@ bf2a943	3.635723e-02	2.37	DISCARD	HYP-10.5 spectral attention gate
 e9a45ff	3.408787e-02	2.60	DISCARD	HYP-10.7 factorized space-time gating
 df2dd1e	6.130872e-02	2.08	DISCARD	HYP-12.5 EMA PDE balancing
 b0639d4	4.296569e-02	2.64	DISCARD	HYP-10.6 exact-IC cross-attention
+161e4e6	3.323696e-02	2.08	KEEP	HYP-12.4 progressive R3 retention
