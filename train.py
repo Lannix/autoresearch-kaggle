@@ -454,27 +454,12 @@ class MultiScaleFourierCore(torch.nn.Module):
             ).view(1, -1),
         )
 
-        # random_feature_dim/theta_feature_dim/time_feature_dim: widths of the major encoded groups.
-        self.random_feature_dim = 2 * self.features_per_scale * len(self.sigmas)
-        self.theta_feature_dim = 2 * len(self.theta_harmonics)
-        self.time_feature_dim = 2 * len(self.time_harmonics)
-        # gate_hidden_dim: width of the lightweight factorized gating MLPs.
-        self.gate_hidden_dim = 16
-
-        # Factorized space-time gating:
-        # The random joint Fourier bank is modulated by independent theta and time gates,
-        # while the deterministic theta/time harmonic banks get their own specialized gates.
-        self.random_space_gate = self.build_gate_mlp(self.random_feature_dim)
-        self.random_time_gate = self.build_gate_mlp(self.random_feature_dim)
-        self.theta_gate = self.build_gate_mlp(self.theta_feature_dim)
-        self.time_gate = self.build_gate_mlp(self.time_feature_dim)
-
         # encoded_dim: width of the concatenated feature vector after all encodings.
         encoded_dim = (
             input_dim
-            + self.random_feature_dim
-            + self.theta_feature_dim
-            + self.time_feature_dim
+            + 2 * self.features_per_scale * len(self.sigmas)
+            + 2 * len(self.theta_harmonics)
+            + 2 * len(self.time_harmonics)
         )
         
         # Build the standard MLP on top of the Fourier features
@@ -489,49 +474,26 @@ class MultiScaleFourierCore(torch.nn.Module):
         self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
-    def build_gate_mlp(self, output_dim):
-        """Creates a tiny gating MLP used for factorized feature modulation."""
-        return torch.nn.Sequential(
-            torch.nn.Linear(1, self.gate_hidden_dim),
-            torch.nn.Tanh(),
-            torch.nn.Linear(self.gate_hidden_dim, output_dim),
-        )
-
     def reset_parameters(self):
         for module in self.network:
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
-        for gate in (self.random_space_gate, self.random_time_gate, self.theta_gate, self.time_gate):
-            first_linear = gate[0]
-            last_linear = gate[2]
-            torch.nn.init.xavier_uniform_(first_linear.weight)
-            torch.nn.init.zeros_(first_linear.bias)
-            # Start very close to identity so the experiment does not throw away the strong baseline.
-            torch.nn.init.zeros_(last_linear.weight)
-            torch.nn.init.constant_(last_linear.bias, 4.0)
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
         encoded = [x]
-        # theta_norm/time_norm: normalized coordinates used to compute separable gates.
-        theta_norm = x[:, 0:1]
-        time_norm = x[:, 1:2]
-
-        # random_features: concatenated joint random Fourier features before gating.
-        random_features = []
         for idx in range(len(self.sigmas)):
             # projection: one random Fourier projection matrix.
             projection = getattr(self, f"projection_{idx}")
             # angles: Fourier phases produced by the random projection.
             angles = 2.0 * math.pi * (x @ projection.T)
-            random_features.append(torch.sin(angles))
-            random_features.append(torch.cos(angles))
-        random_features = torch.cat(random_features, dim=1)
+            encoded.append(torch.sin(angles))
+            encoded.append(torch.cos(angles))
 
         # theta/time_coord: convert normalized inputs back to physical coordinates.
-        theta = theta_norm / domain.theta_norm_scale + domain.theta_center
-        time_coord = time_norm / domain.time_norm_scale + domain.time_center
+        theta = x[:, 0:1] / domain.theta_norm_scale + domain.theta_center
+        time_coord = x[:, 1:2] / domain.time_norm_scale + domain.time_center
         # theta_modes/time_omegas: deterministic harmonic tensors on the current device/dtype.
         theta_modes = self.det_theta_modes.to(device=x.device, dtype=x.dtype)
         time_omegas = self.det_time_omegas.to(device=x.device, dtype=x.dtype)
@@ -539,21 +501,10 @@ class MultiScaleFourierCore(torch.nn.Module):
         # theta_angles/time_angles: phases for the deterministic breather-tuned harmonics.
         theta_angles = 2.0 * math.pi * (theta - domain.theta_origin) * theta_modes / domain.theta_period
         time_angles = (time_coord - domain.t0) * time_omegas
-        theta_features = torch.cat((torch.sin(theta_angles), torch.cos(theta_angles)), dim=1)
-        time_features = torch.cat((torch.sin(time_angles), torch.cos(time_angles)), dim=1)
-
-        # Apply factorized near-identity gates.
-        random_features = (
-            random_features
-            * torch.sigmoid(self.random_space_gate(theta_norm))
-            * torch.sigmoid(self.random_time_gate(time_norm))
-        )
-        theta_features = theta_features * torch.sigmoid(self.theta_gate(theta_norm))
-        time_features = time_features * torch.sigmoid(self.time_gate(time_norm))
-
-        encoded.append(random_features)
-        encoded.append(theta_features)
-        encoded.append(time_features)
+        encoded.append(torch.sin(theta_angles))
+        encoded.append(torch.cos(theta_angles))
+        encoded.append(torch.sin(time_angles))
+        encoded.append(torch.cos(time_angles))
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
@@ -639,11 +590,6 @@ print(
     f"theta_modes={feature_config.theta_harmonics}, "
     f"time_period_guess={feature_config.period_guess:.4f}, "
     f"time_harmonics={feature_config.time_harmonics}"
-)
-print(
-    "[INFO] Factorized space-time gating: "
-    f"enabled, gate_hidden={net.core.gate_hidden_dim}, "
-    "identity_bias=4.0"
 )
 print(
     "[INFO] Global power prior: "
