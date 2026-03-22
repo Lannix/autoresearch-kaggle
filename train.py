@@ -193,17 +193,6 @@ u0_cos_coeffs, u0_sin_coeffs = build_real_fourier_coeffs(u0_samples)
 v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
 # fourier_modes: integer mode indices 0,1,2,... for the Fourier series.
 fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
-# ic_memory_tokens_np: compact per-mode descriptors used by HYP-10.6 cross-attention.
-# Each token stores the normalized Fourier mode index plus the exact IC coefficients.
-ic_memory_tokens_np = np.column_stack(
-    (
-        fourier_modes / max(float(fourier_modes[-1]), 1.0),
-        u0_cos_coeffs,
-        u0_sin_coeffs,
-        v0_cos_coeffs,
-        v0_sin_coeffs,
-    )
-).astype(np.float32)
 
 # domain: one object that groups the physical bounds, PDE constants, and normalization factors.
 domain = DomainConfig(
@@ -464,17 +453,6 @@ class MultiScaleFourierCore(torch.nn.Module):
                 dtype=torch.float32,
             ).view(1, -1),
         )
-        # ic_memory_tokens: fixed memory bank extracted from the exact IC Fourier coefficients.
-        self.register_buffer(
-            "ic_memory_tokens",
-            torch.tensor(ic_memory_tokens_np, dtype=torch.float32),
-        )
-        # ic_attention_dim: width of the lightweight exact-IC cross-attention context.
-        self.ic_attention_dim = 16
-        # ic_query_proj/ic_key_proj/ic_value_proj: projections for explicit cross-attention.
-        self.ic_query_proj = torch.nn.Linear(input_dim, self.ic_attention_dim)
-        self.ic_key_proj = torch.nn.Linear(self.ic_memory_tokens.shape[1], self.ic_attention_dim)
-        self.ic_value_proj = torch.nn.Linear(self.ic_memory_tokens.shape[1], self.ic_attention_dim)
 
         # encoded_dim: width of the concatenated feature vector after all encodings.
         encoded_dim = (
@@ -482,7 +460,6 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * self.features_per_scale * len(self.sigmas)
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
-            + self.ic_attention_dim
         )
         
         # Build the standard MLP on top of the Fourier features
@@ -502,22 +479,6 @@ class MultiScaleFourierCore(torch.nn.Module):
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
-        for module in (self.ic_query_proj, self.ic_key_proj, self.ic_value_proj):
-            torch.nn.init.xavier_uniform_(module.weight)
-            torch.nn.init.zeros_(module.bias)
-
-    def exact_ic_context(self, x):
-        """Builds a small attention summary from the fixed exact-IC Fourier memory bank."""
-        # memory_tokens: fixed Fourier-mode descriptors on the current device/dtype.
-        memory_tokens = self.ic_memory_tokens.to(device=x.device, dtype=x.dtype)
-        # query/key/value: projected tensors for manual Hessian-friendly cross-attention.
-        query = self.ic_query_proj(x)
-        key = self.ic_key_proj(memory_tokens)
-        value = self.ic_value_proj(memory_tokens)
-        # attn_logits/attn_weights: attention over Fourier-memory tokens for each point.
-        attn_logits = (query @ key.T) / math.sqrt(float(self.ic_attention_dim))
-        attn_weights = torch.softmax(attn_logits, dim=1)
-        return attn_weights @ value
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -544,8 +505,6 @@ class MultiScaleFourierCore(torch.nn.Module):
         encoded.append(torch.cos(theta_angles))
         encoded.append(torch.sin(time_angles))
         encoded.append(torch.cos(time_angles))
-        # ic_context: attention summary over the exact initial-condition Fourier memory bank.
-        encoded.append(self.exact_ic_context(x))
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
@@ -631,11 +590,6 @@ print(
     f"theta_modes={feature_config.theta_harmonics}, "
     f"time_period_guess={feature_config.period_guess:.4f}, "
     f"time_harmonics={feature_config.time_harmonics}"
-)
-print(
-    "[INFO] Exact-IC cross-attention: "
-    f"tokens={net.core.ic_memory_tokens.shape[0]}, "
-    f"attention_dim={net.core.ic_attention_dim}"
 )
 print(
     "[INFO] Global power prior: "
