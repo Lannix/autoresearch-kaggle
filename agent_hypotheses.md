@@ -390,10 +390,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Project the stored exact IC Fourier coefficients into a fixed `K` and `V` memory bank, project each batch of `(theta, t)` points into `Q`, compute explicit cross-attention against the IC memory, and concatenate the attended IC summary with the MsFFN features before the main MLP. This is a PINNsFormer-style way to anchor long-time evolution to the exact initial state without reintroducing a soft IC loss.
 
-- [ ] **HYP-10.7: Factorized Space-Time Attention (Separable Gating)**
+- [x] **HYP-10.7: Factorized Space-Time Attention (Separable Gating)** [DISCARD]
   - *Idea:* LLE has distinct spatial and temporal dynamics, so use separate attention-like gates for $\theta$ and $t$ before merging them instead of forcing a fully entangled first layer.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Split the encoded feature bank into spatial and temporal groups, compute `space_attn = MLP_theta(theta)` and `time_attn = MLP_t(t)`, then apply those gates to the corresponding spatial Fourier and temporal harmonic features before recombining them. This should be cheaper and smoother than full attention while still importing the 2026 dimension-factorized modeling trend.
+  - *Outcome:* `DISCARD` | *Delta:* `+3.222400e-04 val_mse regression`
+  - *Notes:* Added structured near-identity gates inside `MultiScaleFourierCore`: separate `theta` and `time` MLP gates modulated the deterministic harmonic groups, and the joint random Fourier bank was modulated by multiplicative space/time gates. To preserve the strong MsFFN baseline at initialization, the gate output layers were zero-initialized with bias `4.0`, so the initial sigmoid weights stayed close to one. The run stayed stable and finished with a very close `val_mse = 3.408787e-02`, but peak VRAM rose to `2666.0 MB`, step throughput dropped to `7880`, and Adam no longer reached step `5000`, so the winning one-shot R3 refresh never fired. The small regression suggests the factorized gating itself was not catastrophic, but the extra overhead likely erased the benefit of the current curriculum-plus-R3 training schedule.
 
 ## Category 11: Breather-Specific Physics & Sampling
 *Breathers are localized in space but oscillate in time. Uniform sampling wastes 90% of compute on the flat CW (Continuous Wave) background.*
