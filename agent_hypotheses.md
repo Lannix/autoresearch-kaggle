@@ -438,6 +438,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+3.589e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, left the R3 resampler, curriculum schedule, Gaussian-beta anchor policy, and MsFFN random scales unchanged, and only expanded the deterministic breather-tuned time harmonics from `(1, 2)` to `(1, 2, 3)`. Kaggle T4 stayed stable, total progress remained healthy at `9516` steps, and the extra harmonic only modestly increased parameter count to `76930` and peak VRAM to `2136.9 MB`, but final `val_mse` still regressed from `3.376563e-02` to `3.735495e-02`. The weaker retained residual scores during R3 (`retained_mean = 1.637e-01` versus `1.859e-01` for the winner) suggest the added temporal prior made the representation a bit too diffuse rather than sharpening the useful breather structure.
 
+- [ ] **HYP-11.9: More Frequent Full-Domain R3 Refresh**
+  - *Idea:* Keep the winning HYP-11.2 R3 mechanism and retention fraction, but shorten the refresh period so slower models still get at least one full-domain R3 update before Adam hands off to L-BFGS.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Starting from the kept HYP-11.2 baseline, reduce the R3 period from `5000` to `2000` while leaving the `20%` retain fraction, causal residual scoring, Gaussian-plus-uniform theta sampler, and `Beta(1, 3)` time bias unchanged. This should trigger refreshes at steps `4000`, `6000`, ... once the curriculum has reached the full time horizon, instead of occasionally missing R3 entirely on slower architectures.
+
 ## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
 
 - [ ] **HYP-12.1: Lightweight PIKAN Core (Physics-Informed Kolmogorov-Arnold Networks)**
