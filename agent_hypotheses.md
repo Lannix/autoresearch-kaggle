@@ -455,10 +455,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* `DISCARD` | *Delta:* `+2.777021e-02 val_mse regression`
   - *Notes:* Replaced the fixed hidden `tanh` stack inside `MultiScaleFourierCore` with per-layer L-LAAF activations `tanh(10 * |a| * x)`, initializing every trainable slope at `0.1` so the model started near the baseline MsFFN behavior. The run was numerically stable and still reached the normal curriculum and one-shot R3 refresh at step `5000`, but both Adam and L-BFGS converged much more poorly: `val_mse` regressed to `6.153584e-02`, `peak_vram_mb` rose to `2650.3`, and total progress fell to `8360` steps, so the adaptive slopes appear to have made the loss landscape harder rather than easier for this LLE setup.
 
-- [ ] **HYP-12.3: Learnable Causal Annealing**
+- [x] **HYP-12.3: Learnable Causal Annealing** [DISCARD]
   - *Idea:* The current causal weighting `exp(-2.0 * time_frac)` helped substantially, but a fixed decay rate may be too rigid. Let the network learn how fast to open the effective time horizon as the physics residual improves.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Add a strictly positive trainable scalar such as `self.causal_k = torch.nn.Parameter(torch.tensor([2.0]))`, then compute the causal factor as `exp(-abs(self.causal_k) * time_frac)`. This turns the successful causal prior into a learned schedule instead of a hand-tuned constant.
+  - *Outcome:* `DISCARD` | *Delta:* `+7.607080e-03 val_mse regression`
+  - *Notes:* Added a trainable scalar `causal_k` to `NormalizedChainRuleNet`, initialized at the successful baseline value `2.0`, and replaced the fixed PDE weighting with `exp(-abs(causal_k) * time_frac)` while logging the learned rate at the end of training. The run stayed fully stable, kept the normal curriculum schedule, and still hit the one-shot R3 refresh at step `5000`, but validation regressed to `4.137271e-02` even though the training loss became extremely small. The learned decay exploded to `causal_k = 10.135709`, which strongly suggests the model exploited the extra freedom by over-focusing on the earliest times and under-training the later breather dynamics.
 
 - [ ] **HYP-12.4: Progressive R3 Retention Scaling**
   - *Idea:* The winning R3 callback currently uses a fixed `retain_fraction = 0.20`, but the best exploration-exploitation tradeoff may change over training: lower retention early for discovery, higher retention late for refinement.
