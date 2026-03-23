@@ -423,11 +423,86 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     return collocation_points
 
 
+class WaveletKANLayer(torch.nn.Module):
+    """
+    Lightweight wavelet layer used for the HYP-10.2 retry.
+    The first attempt used edge-wise wavelet tensors and blew up the Hessian graph.
+    This version keeps the same Morlet-wavelet idea but applies it after one learned projection,
+    so the second-derivative path stays close to a standard MLP in memory cost.
+    """
+
+    def __init__(self, input_dim, output_dim, morlet_omega=1.75):
+        super().__init__()
+        # linear: learned projection that defines one scalar preactivation per output neuron.
+        self.linear = torch.nn.Linear(int(input_dim), int(output_dim))
+        # morlet_omega: carrier frequency of the Morlet wavelet.
+        self.morlet_omega = float(morlet_omega)
+        # wavelet_shift: trainable center of each neuron's wavelet response.
+        self.wavelet_shift = torch.nn.Parameter(torch.zeros(int(output_dim)))
+        # wavelet_log_scale: unconstrained parameter mapped to a positive dilation factor.
+        self.wavelet_log_scale = torch.nn.Parameter(torch.full((int(output_dim),), -0.2))
+        # wavelet_gain: how strongly the wavelet branch perturbs the linear path.
+        self.wavelet_gain = torch.nn.Parameter(torch.full((int(output_dim),), 0.1))
+
+    def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.linear.weight)
+        torch.nn.init.zeros_(self.linear.bias)
+        torch.nn.init.zeros_(self.wavelet_shift)
+        torch.nn.init.constant_(self.wavelet_log_scale, -0.2)
+        torch.nn.init.constant_(self.wavelet_gain, 0.1)
+
+    def forward(self, x):
+        # z: low-cost projected features that the wavelet acts on.
+        z = self.linear(x)
+        # scale: strictly positive dilation of each neuron's wavelet response.
+        scale = torch.nn.functional.softplus(self.wavelet_log_scale) + 1e-4
+        # centered: shifted and scaled coordinates inside the Morlet wavelet.
+        centered = (z - self.wavelet_shift) * scale
+        # morlet: localized oscillatory activation that can model sharp breather structure.
+        morlet = torch.exp(-0.5 * centered.square()) * torch.cos(self.morlet_omega * centered)
+        return z + self.wavelet_gain * morlet
+
+
+class WaveletKANHead(torch.nn.Module):
+    """
+    Very small wavelet-based readout head for HYP-10.2.
+    The Fourier encoder stays unchanged; only the dense tanh stack is swapped for
+    a compact projected-wavelet stack so the experiment stays comparable to baseline.
+    """
+
+    def __init__(self, input_dim, hidden_widths, output_dim):
+        super().__init__()
+        # hidden_widths: intentionally small widths to fit the T4 Hessian budget.
+        self.hidden_widths = tuple(int(width) for width in hidden_widths)
+        # hidden_layers: sequence of projected Morlet-wavelet layers.
+        self.hidden_layers = torch.nn.ModuleList()
+
+        previous_dim = int(input_dim)
+        for hidden_dim in self.hidden_widths:
+            self.hidden_layers.append(WaveletKANLayer(previous_dim, hidden_dim))
+            previous_dim = hidden_dim
+
+        # output_layer: linear map from wavelet features into the real/imaginary field.
+        self.output_layer = torch.nn.Linear(previous_dim, int(output_dim))
+
+    def reset_parameters(self):
+        for layer in self.hidden_layers:
+            layer.reset_parameters()
+        torch.nn.init.xavier_uniform_(self.output_layer.weight)
+        torch.nn.init.zeros_(self.output_layer.bias)
+
+    def forward(self, x):
+        for layer in self.hidden_layers:
+            x = layer(x)
+        return self.output_layer(x)
+
+
 class MultiScaleFourierCore(torch.nn.Module):
     """
     Standard PINNs suffer from 'spectral bias' (they struggle to learn high frequencies).
     This core projects the inputs into a series of Sine/Cosine waves at different scales (sigmas)
     and specific guessed frequencies (harmonics) to give the network a "head start".
+    HYP-10.2 keeps this encoder and only swaps the dense head for a small wavelet-KAN head.
     """
     def __init__(self, input_dim=2, hidden_dim=128, num_hidden_layers=5, output_dim=2, 
                  sigmas=(1.0, 10.0), features_per_scale=16):
@@ -466,23 +541,17 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.time_harmonics)
         )
         
-        # Build the standard MLP on top of the Fourier features
-        # layer_dims: widths of every linear layer in the MLP head.
-        layer_dims =[encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
-        # layers: Python list used to build the final torch.nn.Sequential block.
-        layers = []
-        for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
-            layers.append(torch.nn.Linear(in_dim, out_dim))
-            layers.append(torch.nn.Tanh())
-        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
-        self.network = torch.nn.Sequential(*layers)
+        # hidden_widths: very small wavelet widths to avoid the OOM seen in the first retry.
+        hidden_widths = (10, 10)
+        self.network = WaveletKANHead(
+            input_dim=encoded_dim,
+            hidden_widths=hidden_widths,
+            output_dim=output_dim,
+        )
         self.reset_parameters()
 
     def reset_parameters(self):
-        for module in self.network:
-            if isinstance(module, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(module.weight)
-                torch.nn.init.zeros_(module.bias)
+        self.network.reset_parameters()
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -585,10 +654,11 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN-style core: "
+    "[INFO] MsFFN encoder: "
     f"sigmas={feature_config.sigmas}, "
     f"features_per_scale={feature_config.features_per_scale}"
 )
+print("[INFO] Wavelet PIKAN retry head: hidden_widths=(10, 10), wavelet=Morlet, projected-wavelet")
 print(
     "[INFO] Breather-tuned Fourier features: "
     f"theta_modes={feature_config.theta_harmonics}, "
