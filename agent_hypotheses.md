@@ -484,3 +484,59 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Previous explicit periodic boundary losses likely suffered from gradient pathologies. Reintroduce a lightweight periodic residual, but dynamically rebalance its weight so the optimizer cannot let it dominate or vanish relative to the PDE channels.
   - *Outcome:* `DISCARD` | *Delta:* `+2.879100e-03 val_mse regression`
   - *Notes:* Added a lightweight explicit periodic value residual over `256` fixed time points by comparing `(u, v)` at `theta_min` and `theta_max`, then drove that fourth loss channel with a custom callback that updated a scalar periodic weight from the logged ratio between mean PDE loss and periodic loss. To keep the existing curriculum thresholds meaningful, stage expansion continued to look only at the original `[pde_u, pde_v, power]` channels. The run stayed fully stable, the curriculum still reached the full domain by step `4000`, and the winning progressive-R3 refresh still fired on schedule at step `5000`, but the balancing policy quickly forced the periodic weight from `0.25` all the way to the cap `4.0` and final `val_mse` regressed from `3.323696e-02` to `3.611606e-02`. That behavior suggests the explicit periodic loss is still a poor fit for this pipeline: even when dynamically reweighted, the optimizer keeps trying to amplify it because the boundary mismatch remains tiny relative to the PDE channels, yet the added constraint still hurts generalization instead of helping.
+
+## Phase 13: Deep Research Import - Operator and Curriculum Directions
+*Imported from external deep-research notes on March 23, 2026. Some items overlap themes already tested here, but are kept as broader recipe-level hypotheses so we can track stronger variants separately.*
+
+- [ ] **HYP-13.1: Operator-Network Pivot for LLE**
+  - *Idea:* The 2026 view is that difficult nonlinear PDEs like the LLE often exceed what pointwise MLP PINNs can represent efficiently. Shift toward an operator-learning backbone, especially if we later care about more than one initial condition or pump setting.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Prototype a lightweight PINO/FNO-style or DeepONet-style hybrid that still keeps PDE residual enforcement. If the full operator stack is too heavy for the Kaggle budget, start with a small spectral operator block inside the current DeepXDE model rather than a full rewrite.
+
+- [ ] **HYP-13.2: High-Frequency-Capable Complex Representation**
+  - *Idea:* Breather solitons are highly oscillatory, so the network should be biased toward high-frequency structure instead of low-frequency smoothing.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Revisit the architecture with a stronger complex-envelope prior: complex-valued outputs, Fourier-feature embeddings, or a stabilized sinusoidal/SIREN-style core designed specifically for accurate higher-order derivatives. This is a broader follow-up to the earlier sine and complex-valued experiments, not a blind rerun.
+
+- [ ] **HYP-13.3: XPINN-Style Time Slab Decomposition**
+  - *Idea:* The LLE combines stiffness, dissipation, and long-time sensitivity, so a single global PINN may simply be solving too long a horizon at once.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Partition the time domain into consecutive slabs with one sub-network or one training stage per slab, passing the learned terminal state forward. This is a stronger decomposition strategy than the current soft curriculum and would directly test whether long-horizon coupling is the main remaining bottleneck.
+
+- [x] **HYP-13.4: Harder Causal Time-Marching Curriculum** [DISCARD]
+  - *Idea:* Vanilla causal weighting may still allow the optimizer to "shortcut" late-time regions before early-time physics is truly locked in.
+  - *Outcome:* `DISCARD` | *Delta:* `+5.659300e-03 val_mse regression`
+  - *Notes:* Strengthened the winning curriculum into six hard time windows `0.15 -> 0.30 -> 0.50 -> 0.70 -> 0.85 -> 1.00`, reduced `min_stage_steps` from `1000` to `800`, and unlocked each stage using only the mean of the two PDE loss channels instead of the total loss so the auxiliary power prior could not advance the horizon early. Operationally the idea worked exactly as intended: the model stayed stable, reached the full domain right at step `5000`, and still triggered the one-shot progressive R3 refresh on schedule, with a sharper retained set (`retained_mean = 2.529e-01` versus `2.499e-01` for the kept baseline). Even so, validation regressed from `3.323696e-02` to `3.889626e-02` with essentially unchanged VRAM (`2133.2 MB`) and `9491` total steps, which suggests this harder curriculum delayed useful global-context exposure too much and made the final full-domain transition too abrupt for the current MsFFN plus R3 pipeline.
+
+- [ ] **HYP-13.5: Stronger Adaptive Collocation with Causal-AS Logic**
+  - *Idea:* Uniform or weakly biased collocation wastes too much budget on flat continuous-wave background, especially once the breather peak begins moving or sharpening.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Combine residual-based adaptive sampling with the existing causal schedule more explicitly, so resampling is focused on the hardest regions within the currently unlocked time horizon. This is broader than the one-shot R3 family and should be treated as a new adaptive-sampling recipe.
+
+- [ ] **HYP-13.6: Dynamic Loss Balancing with Dissipative Physical Regularizers**
+  - *Idea:* The LLE is driven and dissipative, so raw PDE, IC, BC, and auxiliary-physics channels can sit on very different gradient scales throughout training.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Revisit dynamic weighting, but pair it with additional dissipative-system regularizers rather than balancing only the existing loss channels. Candidate add-ons include power- or momentum-like constraints adapted to the driven/damped setting so the optimizer is discouraged from drifting into trivial or averaged states.
+
+## Phase 14: Deep Research Import - State-of-the-Art Recipes
+*These are imported as explicit experiment templates from the same deep-research note, even where they overlap existing themes. The goal is to preserve the recipe-level framing for future trials.*
+
+- [ ] **HYP-14.1: TMA-PINN Style Two-Stage Mini-Batch Adaptive Training**
+  - *Idea:* Use a cautious first stage to learn the coarse breather structure, then a second stage that aggressively resamples around steep gradients using mini-batches and adaptive gradient balancing.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This should be treated as a full recipe rather than a single toggle: coarse collocation first, then focused resampling near high-residual peak regions, with explicit gradient balancing between PDE and auxiliary constraints.
+
+- [ ] **HYP-14.2: Strong Causal PINN / bc-PINN Recipe**
+  - *Idea:* Force the optimizer to solve the LLE in temporal order by blocking or sharply suppressing future-time residual minimization until earlier windows are under control.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This is the imported state-of-the-art recipe version of causal training, distinct from small scalar-causality tweaks. If tested, it should be implemented as a whole training procedure rather than another local weighting edit.
+
+- [ ] **HYP-14.3: PIKAN Recipe with Trainable Edge Functions**
+  - *Idea:* Replace standard MLP hidden transforms with trainable edge functions such as splines, wavelets, or other adaptive basis functions to reduce spectral bias and parameter inefficiency.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This is the broader recipe-level version of the earlier PIKAN/KAN ideas, motivated by the claim that trainable edge functions can represent oscillatory breather structure far more efficiently than fixed-node activations.
+
+- [ ] **HYP-14.4: PINO/FNO Hybrid Operator Loss**
+  - *Idea:* Learn the LLE evolution operator itself using Fourier-space layers while still enforcing the PDE residual, rather than fitting only one trajectory as a plain pointwise PINN.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* If we test this, the cleanest first step is a hybrid operator-loss experiment that mixes spectral operator layers with physics residuals, not a purely data-driven neural operator. This imported recipe is especially relevant if we expand beyond one initial condition or one pump setting.

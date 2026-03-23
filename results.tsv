@@ -84,3 +84,4 @@ b0639d4	4.296569e-02	2.64	DISCARD	HYP-10.6 exact-IC cross-attention
 161e4e6	3.323696e-02	2.08	KEEP	HYP-12.4 progressive R3 retention
 74abbe4	3.412243e-02	2.08	DISCARD	HYP-12.7 ultra-exploratory R3 refresh
 c20f6e4	3.611606e-02	2.08	DISCARD	HYP-12.8 dynamic periodic loss balancing
+272e2b9	3.889626e-02	2.08	DISCARD	HYP-13.4 harder causal curriculum
