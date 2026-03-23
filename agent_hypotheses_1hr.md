@@ -66,6 +66,11 @@ The strongest 30-minute evidence says the best model benefits from aggressive fu
   - *Outcome:* [DISCARD] | *Delta:* `+2.516195e-02 val_mse regression`
   - *Notes:* Starting from the kept `1HR-0.1` baseline, rewrote `R3Resampler` into a true candidate-screened RAR callback: the full-domain gate was removed so refreshes are allowed at any curriculum stage, retained anchors still came from the hardest active points, but replacements were now selected from large uniform candidate pools bounded by `[t_min, curriculum_time_upper]` instead of from the static Gaussian-plus-`Beta(1, 3)` prior. Each refresh screened `5x` as many candidates as replacement slots and then injected `5%` pure uniform noise into the final anchor set. Mechanically the refactor worked exactly as intended under the 1-hour budget: R3 fired twice, screening `135000` candidates at step `5000` and `120000` at step `10000`, with the second refresh surfacing much harsher points (`selected_max = 7.101e+00`). But generalization collapsed badly: `val_mse` regressed from the kept `1HR-0.1` best `3.093994e-02` to `5.610189e-02` even though peak VRAM stayed flat at `2133.1 MB` and total progress stayed high at `17050` steps. The most likely failure mode is that true uniform-time RAR over-focused the anchor set on transient high-residual ridges and threw away too much of the carefully tuned Gaussian-plus-causal prior that makes the current baseline generalize.
 
+- [ ] **1HR-6.4: Frequent True RAR Without Global Power Prior**
+  - *Idea:* Retry the true RAR-style `R3Resampler`, but remove the global power stabilization loss entirely and make R3 much more frequent so adaptive collocation drives the training signal.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This directly combines the failed `1HR-6.3` true-RAR refactor with the hypothesis that the old global power prior may be fighting adaptive collocation. The trial should keep true residual-screened candidate replacement, lower `r3_period` to `500`, raise `r3_max_retain_fraction` to `0.50`, and remove the power-prior loss channel from the pipeline so the PDE residual and adaptive anchors dominate the optimization.
+
 ## Category 7: Optimization and Dynamic Balancing at 1 Hour
 Several optimization ideas were close or clearly stable, but they spent too much of the 30-minute budget before the model could exploit them.
 
