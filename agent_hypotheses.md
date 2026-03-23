@@ -443,10 +443,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+3.842e-03 val_mse regression]
   - *Notes:* Starting from the kept HYP-11.2 baseline, reduced the R3 period from `5000` to `2000` while leaving the `20%` retain fraction, causal residual scoring, Gaussian-plus-uniform theta sampler, and `Beta(1, 3)` time bias unchanged. On Kaggle T4 this did exactly what it was supposed to do operationally: once the curriculum reached the full time horizon at step `4000`, R3 fired immediately and retained the top `6000 / 30000` anchors with `retained_mean = 2.395e-01` and `retained_max = 1.326e+00`. However, Adam effectively ended around step `5000`, so the more frequent schedule still only yielded one refresh in practice, just earlier than the winning baseline, and final `val_mse` regressed from `3.376563e-02` to `3.760736e-02` with unchanged peak VRAM at `2133.1 MB`. This matches the earlier HYP-11.4 signal that refreshing too early hurts more than it helps.
 
-- [ ] **HYP-11.10: Breather Period Calibration for Deterministic Time Harmonics**
+- [x] **HYP-11.10: Breather Period Calibration for Deterministic Time Harmonics** [DISCARD]
   - *Idea:* The deterministic breather-tuned time features were a major win, but the current period guess `0.9990` is still hand-tuned. Calibrate the guessed breather period itself while leaving the rest of the winning MsFFN, curriculum, and R3 pipeline unchanged.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Start with the smallest plausible retune from the kept `HYP-12.4` baseline by changing the deterministic time-feature period guess from `0.9990` to `1.0000`. This is intentionally a tiny, cheap search around the current winner rather than a broad harmonic redesign.
+  - *Outcome:* `DISCARD` | *Delta:* `+1.387660e-03 val_mse regression`
+  - *Notes:* Starting from the kept `HYP-12.4` baseline, changed only the deterministic time-feature period guess from `0.9990` to `1.0000` while leaving the random MsFFN scales, theta harmonics, curriculum schedule, and progressive one-shot R3 refresh unchanged. The run stayed fully stable, peak VRAM remained flat at `2133.1 MB`, the curriculum still reached the full domain by step `4000`, and the step-`5000` R3 refresh still fired on schedule with slightly sharper retained residuals (`retained_mean = 2.864e-01`). Even so, final `val_mse` regressed from `3.323696e-02` to `3.462462e-02` with `9450` total steps, so the original slightly detuned period guess `0.9990` remains better than exact unit period in the current deterministic Fourier prior.
 
 ## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
 
