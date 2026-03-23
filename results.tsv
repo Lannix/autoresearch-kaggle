@@ -92,3 +92,4 @@ e38f399	3.763226e-02	2.08	DISCARD	HYP-13.5 local adaptive R3 refresh
 74e2a47	3.347152e-02	2.08	DISCARD	HYP-9.3 BGDA proxy loss balancing
 e77ae32	nan	nan	CRASH	HYP-10.2 wavelet PIKAN core
 970365b	5.882751e-02	0.98	DISCARD	HYP-10.2 wavelet PIKAN retry
+e2d45dc	4.111483e-02	3.05	DISCARD	HYP-11.11 denser collocation set
