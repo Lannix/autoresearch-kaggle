@@ -43,10 +43,10 @@ The main 30-minute bottleneck was throughput: many promising ideas stayed stable
 ## Category 0: 1-Hour Baseline and Revalidation
 The first priority is to measure what the kept 30-minute champion does when the budget doubles without changing the architecture.
 
-- [ ] **1HR-0.1: True 1-Hour Baseline Revalidation**
+- [x] **1HR-0.1: True 1-Hour Baseline Revalidation**
   - *Idea:* Rerun the unchanged 30-minute champion under the new 1-hour budget before changing anything else.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Directly revalidate the kept `HYP-12.4` stack under `TIME_BUDGET = 3600`. This must be the anchor point for all later 1-hour comparisons, because many old discards were only throughput-limited relative to the 30-minute champion.
+  - *Outcome:* [KEEP] | *Delta:* `-2.297020e-03 val_mse improvement`
+  - *Notes:* Directly revalidated the kept `HYP-12.4` 30-minute champion under `TIME_BUDGET = 3600` with no architectural or sampler changes beyond the 1-hour migration. This established the first true 1-hour baseline and confirmed the main 30-minute hypothesis about throughput: the model stayed fully stable, peak VRAM remained flat at `2133.1 MB`, and progressive R3 finally fired twice, at steps `5000` and `10000`, instead of only once. That improved `val_mse` from the archived 30-minute best `3.323696e-02` to `3.093994e-02` with `16971` total steps and `3122.3s` of training, so the current SOTA genuinely benefits from the longer budget and should remain the active 1-hour baseline for future experiments.
 
 ## Category 6: Collocation and R3 at 1 Hour
 The strongest 30-minute evidence says the best model benefits from aggressive full-domain R3, but the old budget only allowed one refresh.
