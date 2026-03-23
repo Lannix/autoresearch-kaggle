@@ -163,11 +163,6 @@ class PowerPriorConfig:
     theta_count: int
     time_count: int
     start_frac: float
-    initial_weight: float
-    dynamic_weight_min: float
-    dynamic_weight_max: float
-    target_pde_fraction: float
-    update_period: int
 
 
 @dataclass(frozen=True)
@@ -256,11 +251,6 @@ power_prior_config = PowerPriorConfig(
     theta_count=512,
     time_count=6,
     start_frac=0.80,
-    initial_weight=1.0,
-    dynamic_weight_min=0.85,
-    dynamic_weight_max=1.50,
-    target_pde_fraction=0.03,
-    update_period=1000,
 )
 
 # curriculum_config: controls when and how the visible time horizon expands.
@@ -291,8 +281,6 @@ optimization_config = OptimizationConfig(
 ic_fourier_cache = {}
 # power_stabilization_cache: cached tensors for the nonlocal power prior.
 power_stabilization_cache = {}
-# power_prior_weight: dynamic multiplier applied to the dissipative power prior channel.
-power_prior_weight = float(power_prior_config.initial_weight)
 # curriculum_time_upper: current maximum time visible to the curriculum sampler.
 curriculum_time_upper = float(domain.t_max)
 
@@ -611,9 +599,7 @@ print(
     "[INFO] Global power prior: "
     f"theta_points={power_prior_config.theta_count}, "
     f"time_points={power_prior_config.time_count}, "
-    f"late_start_frac={power_prior_config.start_frac:.2f}, "
-    f"weight_init={power_prior_config.initial_weight:.2f}, "
-    f"weight_range=({power_prior_config.dynamic_weight_min:.2f}, {power_prior_config.dynamic_weight_max:.2f})"
+    f"late_start_frac={power_prior_config.start_frac:.2f}"
 )
 print(
     "[INFO] Progressive R3 retention: "
@@ -646,7 +632,7 @@ def global_power_stabilization_loss(device, dtype):
     # Calculate difference over time (derivative of power)
     # power_dt: finite-difference estimate of how total power changes over time.
     power_dt = (power_by_time[1:] - power_by_time[:-1]) / (tensors["delta_t"] + 1e-12)
-    return power_prior_weight * tensors["pair_weights"] * power_dt
+    return tensors["pair_weights"] * power_dt
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -997,59 +983,6 @@ class R3Resampler(dde.callbacks.Callback):
         )
 
 
-class AdaptivePowerPriorWeighting(dde.callbacks.Callback):
-    """Gently rebalances the dissipative power prior once the full time horizon is active."""
-
-    def __init__(self, update_period, min_weight, max_weight, target_pde_fraction):
-        super().__init__()
-        self.update_period = int(update_period)
-        self.min_weight = float(min_weight)
-        self.max_weight = float(max_weight)
-        self.target_pde_fraction = float(target_pde_fraction)
-
-    def on_train_begin(self):
-        global power_prior_weight
-        power_prior_weight = float(power_prior_config.initial_weight)
-        self.last_seen_step = -1
-
-    def on_epoch_end(self):
-        global power_prior_weight
-        if curriculum_time_upper < domain.t_max - 1e-6:
-            return
-        if not self.model.losshistory.steps:
-            return
-
-        step = int(self.model.losshistory.steps[-1])
-        if step == self.last_seen_step or step % self.update_period != 0:
-            return
-        self.last_seen_step = step
-
-        loss_train = np.asarray(self.model.losshistory.loss_train[-1], dtype=np.float64)
-        pde_mean = float(np.mean(loss_train[:2]))
-        power_loss = float(max(loss_train[2], 1e-12))
-        stage_progress = float(
-            (curriculum_time_upper - domain.t_min) / (domain.time_span + 1e-12)
-        )
-        stage_target = power_prior_config.initial_weight * (1.0 + 0.35 * stage_progress)
-        ratio_correction = float(
-            np.clip(
-                (self.target_pde_fraction * pde_mean / power_loss) ** 0.05,
-                0.95,
-                1.05,
-            )
-        )
-        new_weight = float(
-            np.clip(stage_target * ratio_correction, self.min_weight, self.max_weight)
-        )
-        if abs(new_weight - power_prior_weight) > 1e-6:
-            print(
-                f"[INFO] Adaptive power-prior weight at step {step}: "
-                f"{power_prior_weight:.4f} -> {new_weight:.4f}, "
-                f"pde_mean={pde_mean:.3e}, power_loss={power_loss:.3e}"
-            )
-            power_prior_weight = new_weight
-
-
 def model_uv(t_in, th_in, need_x=False):
     """Helper formatting output wrapper strictly used by `prepare.evaluate_mse`."""
     # DeepXDE inputs are concatenated [theta, time]
@@ -1079,13 +1012,6 @@ r3_callback = R3Resampler(
     retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
 )
-# power_weight_callback: adaptively scales the late-time dissipative prior once the full horizon is visible.
-power_weight_callback = AdaptivePowerPriorWeighting(
-    update_period=power_prior_config.update_period,
-    min_weight=power_prior_config.dynamic_weight_min,
-    max_weight=power_prior_config.dynamic_weight_max,
-    target_pde_fraction=power_prior_config.target_pde_fraction,
-)
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
@@ -1098,7 +1024,7 @@ try:
     # train_state: DeepXDE object storing the latest training step and state.
     losshistory, train_state = model.train(
         iterations=100000,
-        callbacks=[time_callback_adam, curriculum_callback, r3_callback, power_weight_callback],
+        callbacks=[time_callback_adam, curriculum_callback, r3_callback],
         display_every=1000,
     )
     
@@ -1117,7 +1043,7 @@ try:
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
-        callbacks=[time_callback_lbfgs, power_weight_callback],
+        callbacks=[time_callback_lbfgs],
         display_every=10,
     )
     
@@ -1144,7 +1070,6 @@ try:
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
-    print(f"power_weight:     {power_prior_weight:.6f}")
     print("---")
 
 except Exception as e:
