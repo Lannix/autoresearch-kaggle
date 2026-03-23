@@ -166,17 +166,6 @@ class PowerPriorConfig:
 
 
 @dataclass(frozen=True)
-class PeriodicLossConfig:
-    """Controls the lightweight explicit periodic residual and its dynamic balancing."""
-
-    time_count: int
-    weight_init: float
-    weight_min: float
-    weight_max: float
-    adapt_exponent: float
-
-
-@dataclass(frozen=True)
 class CurriculumConfig:
     """Controls the staged time-domain expansion schedule."""
 
@@ -264,15 +253,6 @@ power_prior_config = PowerPriorConfig(
     start_frac=0.80,
 )
 
-# periodic_loss_config: controls the explicit periodic residual and its dynamic weight schedule.
-periodic_loss_config = PeriodicLossConfig(
-    time_count=256,
-    weight_init=0.25,
-    weight_min=0.02,
-    weight_max=4.0,
-    adapt_exponent=0.25,
-)
-
 # curriculum_config: controls when and how the visible time horizon expands.
 curriculum_config = CurriculumConfig(
     upper_fracs=(0.25, 0.50, 0.75, 1.00),
@@ -301,10 +281,6 @@ optimization_config = OptimizationConfig(
 ic_fourier_cache = {}
 # power_stabilization_cache: cached tensors for the nonlocal power prior.
 power_stabilization_cache = {}
-# periodic_boundary_cache: cached tensors for the explicit periodic value residual.
-periodic_boundary_cache = {}
-# periodic_weight_state: mutable scalar used by the dynamic periodic-loss callback.
-periodic_weight_state = {"value": float(periodic_loss_config.weight_init)}
 # curriculum_time_upper: current maximum time visible to the curriculum sampler.
 curriculum_time_upper = float(domain.t_max)
 
@@ -381,38 +357,6 @@ def get_power_stabilization_tensors(device, dtype, time_upper=None):
             ),
         }
     return power_stabilization_cache[key]
-
-
-def build_periodic_boundary_grid(time_count, time_upper=None):
-    """Creates paired left/right boundary points used by the explicit periodic residual."""
-    # time_upper: current curriculum-dependent upper time bound.
-    time_upper = float(domain.t_max if time_upper is None else time_upper)
-    # time_points: fixed time samples spanning the currently visible curriculum window.
-    time_points = np.linspace(domain.t_min, time_upper, time_count, dtype=np.float32).reshape(-1, 1)
-    # left_theta/right_theta: paired theta boundary coordinates for periodic matching.
-    left_theta = np.full((time_count, 1), domain.th_min, dtype=np.float32)
-    right_theta = np.full((time_count, 1), domain.th_max, dtype=np.float32)
-    left_points = np.hstack((left_theta, time_points)).astype(np.float32)
-    right_points = np.hstack((right_theta, time_points)).astype(np.float32)
-    return left_points, right_points
-
-
-def get_periodic_boundary_tensors(device, dtype, time_upper=None):
-    """Caches the explicit periodic boundary evaluation grid on the correct device."""
-    # time_upper: current curriculum-dependent upper time bound.
-    time_upper = float(domain.t_max if time_upper is None else time_upper)
-    # key: cache key that changes with device, dtype, or the visible curriculum horizon.
-    key = (device.type, device.index, str(dtype), round(time_upper, 6))
-    if key not in periodic_boundary_cache:
-        left_points, right_points = build_periodic_boundary_grid(
-            periodic_loss_config.time_count,
-            time_upper=time_upper,
-        )
-        periodic_boundary_cache[key] = {
-            "left_points": torch.as_tensor(left_points, device=device, dtype=dtype),
-            "right_points": torch.as_tensor(right_points, device=device, dtype=dtype),
-        }
-    return periodic_boundary_cache[key]
 
 
 def reconstruct_fourier_signal(theta, cos_coeffs, sin_coeffs, coeffs):
@@ -658,12 +602,6 @@ print(
     f"late_start_frac={power_prior_config.start_frac:.2f}"
 )
 print(
-    "[INFO] Dynamic periodic loss: "
-    f"time_points={periodic_loss_config.time_count}, "
-    f"weight_init={periodic_loss_config.weight_init:.2f}, "
-    f"weight_range=({periodic_loss_config.weight_min:.2f}, {periodic_loss_config.weight_max:.2f})"
-)
-print(
     "[INFO] Progressive R3 retention: "
     f"start={optimization_config.r3_retain_fraction:.2f}, "
     f"max={optimization_config.r3_max_retain_fraction:.2f}, "
@@ -695,27 +633,6 @@ def global_power_stabilization_loss(device, dtype):
     # power_dt: finite-difference estimate of how total power changes over time.
     power_dt = (power_by_time[1:] - power_by_time[:-1]) / (tensors["delta_t"] + 1e-12)
     return tensors["pair_weights"] * power_dt
-
-
-def periodic_value_residual(device, dtype):
-    """
-    Computes a lightweight explicit periodic residual by matching the field values at
-    theta_min and theta_max over a fixed time grid inside the current curriculum window.
-    """
-    # tensors: cached paired left/right boundary coordinates.
-    tensors = get_periodic_boundary_tensors(device, dtype, time_upper=curriculum_time_upper)
-    # uv_left/uv_right: model predictions on the two periodic boundaries.
-    uv_left = net.forward_from_normalized(net.normalize_inputs(tensors["left_points"]))
-    uv_right = net.forward_from_normalized(net.normalize_inputs(tensors["right_points"]))
-    # value_residual: enforce periodic continuity for both real and imaginary channels.
-    value_residual = torch.cat(
-        (
-            uv_left[:, 0:1] - uv_right[:, 0:1],
-            uv_left[:, 1:2] - uv_right[:, 1:2],
-        ),
-        dim=0,
-    )
-    return float(periodic_weight_state["value"]) * value_residual
 
 # ==========================================
 # 4. Physics / LLE Residual
@@ -790,9 +707,7 @@ def pde(x, y):
     weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x, y)
     # power_stabilization: extra nonlocal prior that stabilizes late-time dynamics.
     power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
-    # periodic_residual: dynamically reweighted explicit periodic value-matching channel.
-    periodic_residual = periodic_value_residual(x.device, x.dtype)
-    return [weighted_res_u, weighted_res_v, power_stabilization, periodic_residual]
+    return[weighted_res_u, weighted_res_v, power_stabilization]
 
 
 # [DeepXDE Note for Beginners]: `dde.data.TimePDE` combines the geometry, the PDE formulation, and boundary conditions.
@@ -896,8 +811,8 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
 
         # loss_train: latest vector of loss channels logged by DeepXDE.
         loss_train = self.model.losshistory.loss_train[-1]
-        # total_loss: curriculum should react to the original physics objective, not auxiliary extras.
-        total_loss = float(np.sum(loss_train[:3])) if len(loss_train) >= 3 else float(np.sum(loss_train))
+        # total_loss: scalar used to decide whether the current stage is ready to expand.
+        total_loss = float(np.sum(loss_train))
         # threshold: stage-specific target loss.
         threshold = self.stage_loss_thresholds[self.stage_index]
         if total_loss > threshold:
@@ -934,64 +849,6 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
         if preserve_current_anchors and abs(curriculum_time_upper - domain.t_max) < 1e-6:
             return
         self.apply_stage(self.stage_index)
-
-
-class DynamicPeriodicWeightScheduler(dde.callbacks.Callback):
-    """
-    Rebalances the explicit periodic residual against the PDE channels using logged loss
-    magnitudes so the periodic term cannot overwhelm physics learning or vanish entirely.
-    """
-
-    def __init__(self, weight_min, weight_max, adapt_exponent):
-        super().__init__()
-        # weight_min/weight_max: hard safety bounds for the scalar periodic weight.
-        self.weight_min = float(weight_min)
-        self.weight_max = float(weight_max)
-        # adapt_exponent: how aggressively the weight responds to loss-ratio changes.
-        self.adapt_exponent = float(adapt_exponent)
-
-    def on_train_begin(self):
-        # Reset only on the first training phase so Adam's learned balance carries into L-BFGS.
-        if not hasattr(self, "has_started"):
-            self.has_started = False
-        if not self.has_started:
-            periodic_weight_state["value"] = float(periodic_loss_config.weight_init)
-            self.has_started = True
-        # last_seen_logged_step: avoids reacting multiple times to the same log entry.
-        self.last_seen_logged_step = -1
-
-    def on_epoch_end(self):
-        if not self.model.losshistory.steps:
-            return
-
-        # step: most recently logged DeepXDE step.
-        step = int(self.model.losshistory.steps[-1])
-        if step == self.last_seen_logged_step:
-            return
-        self.last_seen_logged_step = step
-
-        # loss_train: latest logged channel losses [pde_u, pde_v, power, periodic].
-        loss_train = np.asarray(self.model.losshistory.loss_train[-1], dtype=np.float64)
-        if loss_train.size < 4:
-            return
-
-        # target_loss: mean PDE loss scale the periodic channel should roughly match.
-        target_loss = float(np.mean(loss_train[:2]))
-        # periodic_loss: current periodic-channel loss after its scalar weighting.
-        periodic_loss = float(loss_train[3])
-        old_weight = float(periodic_weight_state["value"])
-
-        # ratio/update_factor: gently nudges the periodic channel toward the PDE scale.
-        ratio = (target_loss + 1e-12) / (periodic_loss + 1e-12)
-        update_factor = float(np.clip(ratio, 0.25, 4.0) ** self.adapt_exponent)
-        new_weight = float(np.clip(old_weight * update_factor, self.weight_min, self.weight_max))
-        periodic_weight_state["value"] = new_weight
-
-        print(
-            f"[INFO] Dynamic periodic weight at step {step}: "
-            f"{old_weight:.4f} -> {new_weight:.4f}, "
-            f"target_loss={target_loss:.3e}, periodic_loss={periodic_loss:.3e}"
-        )
 
 
 def configure_pytorch_lbfgs(total_iters, inner_iters):
@@ -1138,20 +995,14 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds directly to [res_u, res_v, power_stabilization, periodic_residual].
-# loss_weights: relative importance of the two PDE channels, power prior, and periodic residual.
-loss_weights = list(optimization_config.loss_weights) + [1.0]
+# Loss weights order corresponds directly to [res_u, res_v, power_stabilization] returned by `pde`.
+# loss_weights: relative importance of real PDE, imaginary PDE, and power prior losses.
+loss_weights = list(optimization_config.loss_weights)
 # curriculum_callback: expands the visible time horizon as training improves.
 curriculum_callback = TimeCurriculumScheduler(
     stage_upper_fracs=curriculum_config.upper_fracs,
     stage_loss_thresholds=curriculum_config.loss_thresholds,
     min_stage_steps=curriculum_config.min_stage_steps,
-)
-# periodic_weight_callback: dynamically rescales the explicit periodic loss channel.
-periodic_weight_callback = DynamicPeriodicWeightScheduler(
-    weight_min=periodic_loss_config.weight_min,
-    weight_max=periodic_loss_config.weight_max,
-    adapt_exponent=periodic_loss_config.adapt_exponent,
 )
 # r3_callback: retains hard points and resamples easier ones during Adam.
 r3_callback = R3Resampler(
@@ -1173,7 +1024,7 @@ try:
     # train_state: DeepXDE object storing the latest training step and state.
     losshistory, train_state = model.train(
         iterations=100000,
-        callbacks=[time_callback_adam, curriculum_callback, r3_callback, periodic_weight_callback],
+        callbacks=[time_callback_adam, curriculum_callback, r3_callback],
         display_every=1000,
     )
     
@@ -1192,7 +1043,7 @@ try:
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
-        callbacks=[time_callback_lbfgs, periodic_weight_callback],
+        callbacks=[time_callback_lbfgs],
         display_every=10,
     )
     
@@ -1219,7 +1070,6 @@ try:
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"num_steps:        {train_state.step}")
     print(f"num_params:       {num_params}")
-    print(f"periodic_weight:  {float(periodic_weight_state['value']):.6f}")
     print("---")
 
 except Exception as e:
