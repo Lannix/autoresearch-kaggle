@@ -465,6 +465,17 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
         )
+
+        # attention_dim: narrow width of the Transolver-style linear-attention path.
+        self.attention_dim = 24
+        # attention_query/key/value: explicit low-rank projections used in the Hessian-friendly attention block.
+        self.attention_query = torch.nn.Linear(encoded_dim, self.attention_dim)
+        self.attention_key = torch.nn.Linear(encoded_dim, self.attention_dim)
+        self.attention_value = torch.nn.Linear(encoded_dim, self.attention_dim)
+        # attention_output: projects the attention summary back into the encoded feature space.
+        self.attention_output = torch.nn.Linear(self.attention_dim, encoded_dim)
+        # attention_gain: small scalar that keeps the model close to the baseline at initialization.
+        self.attention_gain = torch.nn.Parameter(torch.tensor(0.10, dtype=torch.float32))
         
         # Build the standard MLP on top of the Fourier features
         # layer_dims: widths of every linear layer in the MLP head.
@@ -479,10 +490,34 @@ class MultiScaleFourierCore(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.attention_query.weight)
+        torch.nn.init.zeros_(self.attention_query.bias)
+        torch.nn.init.xavier_uniform_(self.attention_key.weight)
+        torch.nn.init.zeros_(self.attention_key.bias)
+        torch.nn.init.xavier_uniform_(self.attention_value.weight)
+        torch.nn.init.zeros_(self.attention_value.bias)
+        torch.nn.init.xavier_uniform_(self.attention_output.weight)
+        torch.nn.init.zeros_(self.attention_output.bias)
         for module in self.network:
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
+
+    def apply_linear_attention(self, encoded):
+        """
+        HYP-10.4 linear attention:
+        compute a permutation-invariant global feature summary K^T V and feed it back through Q.
+        This avoids softmax entirely and keeps the operator O(N * d^2).
+        """
+        # q/k/v: low-rank attention projections of the encoded Fourier feature bank.
+        q = self.attention_query(encoded)
+        k = self.attention_key(encoded)
+        v = self.attention_value(encoded)
+        # kv_state: global physics summary aggregated across all collocation points in the batch.
+        kv_state = (k.transpose(0, 1) @ v) / max(1, encoded.shape[0])
+        # attended: pointwise response after applying the global summary back through the queries.
+        attended = (q @ kv_state) / math.sqrt(self.attention_dim)
+        return encoded + self.attention_gain * self.attention_output(attended)
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -509,7 +544,8 @@ class MultiScaleFourierCore(torch.nn.Module):
         encoded.append(torch.cos(theta_angles))
         encoded.append(torch.sin(time_angles))
         encoded.append(torch.cos(time_angles))
-        return torch.cat(encoded, dim=1)
+        encoded = torch.cat(encoded, dim=1)
+        return self.apply_linear_attention(encoded)
 
     def forward(self, x):
         return self.network(self.encode(x))
@@ -587,7 +623,8 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 print(
     "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}"
+    f"features_per_scale={feature_config.features_per_scale}, "
+    "linear_attention_dim=24"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
