@@ -498,10 +498,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 ## Phase 13: Deep Research Import - Operator and Curriculum Directions
 *Imported from external deep-research notes on March 23, 2026. Some items overlap themes already tested here, but are kept as broader recipe-level hypotheses so we can track stronger variants separately.*
 
-- [ ] **HYP-13.1: Operator-Network Pivot for LLE**
+- [x] **HYP-13.1: Operator-Network Pivot for LLE**
   - *Idea:* The 2026 view is that difficult nonlinear PDEs like the LLE often exceed what pointwise MLP PINNs can represent efficiently. Shift toward an operator-learning backbone, especially if we later care about more than one initial condition or pump setting.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Prototype a lightweight PINO/FNO-style or DeepONet-style hybrid that still keeps PDE residual enforcement. If the full operator stack is too heavy for the Kaggle budget, start with a small spectral operator block inside the current DeepXDE model rather than a full rewrite.
+  - *Outcome:* [DISCARD] | *Delta:* `+4.737910e-03 val_mse regression`
+  - *Notes:* Starting from the kept `HYP-12.4` baseline, added a lightweight DeepONet-style operator correction inside `MultiScaleFourierCore` instead of replacing the current pointwise head. The exact initial condition was compressed into a fixed branch descriptor using the first `16` Fourier modes of `(u_cos, u_sin, v_cos, v_sin)`, a small branch net mapped that descriptor to `16` operator coefficients, and a small trunk net mapped the encoded pointwise features to matching basis functions. The resulting low-rank operator correction was added as a small residual on top of the original MsFFN head. The run stayed fully stable, preserved the winning curriculum schedule, still reached the full-domain step-`5000` R3 refresh on time, and kept VRAM moderate at `2215.8 MB`, but final `val_mse` still regressed from `3.323696e-02` to `3.797487e-02` with `8885` steps. So this first operator-style hybrid is a clean discard: the added global IC-conditioned correction did not improve generalization over the simpler pointwise baseline.
 
 - [ ] **HYP-13.2: High-Frequency-Capable Complex Representation**
   - *Idea:* Breather solitons are highly oscillatory, so the network should be biased toward high-frequency structure instead of low-frequency smoothing.
