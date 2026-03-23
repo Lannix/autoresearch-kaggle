@@ -531,10 +531,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 ## Phase 14: Deep Research Import - State-of-the-Art Recipes
 *These are imported as explicit experiment templates from the same deep-research note, even where they overlap existing themes. The goal is to preserve the recipe-level framing for future trials.*
 
-- [ ] **HYP-14.1: TMA-PINN Style Two-Stage Mini-Batch Adaptive Training**
+- [x] **HYP-14.1: TMA-PINN Style Two-Stage Mini-Batch Adaptive Training** [DISCARD]
   - *Idea:* Use a cautious first stage to learn the coarse breather structure, then a second stage that aggressively resamples around steep gradients using mini-batches and adaptive gradient balancing.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* This should be treated as a full recipe rather than a single toggle: coarse collocation first, then focused resampling near high-residual peak regions, with explicit gradient balancing between PDE and auxiliary constraints.
+  - *Outcome:* `DISCARD` | *Delta:* `+7.535360e-03 val_mse regression`
+  - *Notes:* Starting from the kept `HYP-12.4` baseline, treated the imported TMA-PINN idea as a lightweight full recipe rather than a single switch. The existing curriculum still handled the cautious first stage, while the previous one-shot progressive R3 refresh was replaced by a more aggressive second-stage refiner: once the full time horizon opened, a callback gently rebalanced the late-time global-power prior against the mean PDE channels and then, at step `5000`, built a `36000`-point candidate pool, retained the hardest `10%` of the current anchors, injected the hardest `40%` of the final anchor budget from the screened candidates, and filled the rest with fresh coverage points from the winning Gaussian-plus-`Beta(1, 3)` sampler. Operationally the recipe worked exactly as intended: the full-domain curriculum still landed at step `4000`, the power prior scale rose gradually from `1.000` to `1.202`, and the focused refresh fired once at step `5000` with `3000` retained, `12000` focused, and `15000` coverage points. Even so, final `val_mse` regressed from `3.323696e-02` to `4.077232e-02` with unchanged peak VRAM (`2133.1 MB`) and `9468` total steps, so this more aggressive second-stage resampling and auxiliary-loss balancing over-specialized the collocation set instead of improving the current winner.
 
 - [ ] **HYP-14.2: Strong Causal PINN / bc-PINN Recipe**
   - *Idea:* Force the optimizer to solve the LLE in temporal order by blocking or sharply suppressing future-time residual minimization until earlier windows are under control.
