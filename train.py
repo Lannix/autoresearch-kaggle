@@ -170,7 +170,7 @@ class CurriculumConfig:
     """Controls the staged time-domain expansion schedule."""
 
     upper_fracs: tuple[float, ...]
-    loss_thresholds: tuple[float, ...]
+    pde_mean_thresholds: tuple[float, ...]
     min_stage_steps: int
 
 
@@ -255,9 +255,9 @@ power_prior_config = PowerPriorConfig(
 
 # curriculum_config: controls when and how the visible time horizon expands.
 curriculum_config = CurriculumConfig(
-    upper_fracs=(0.25, 0.50, 0.75, 1.00),
-    loss_thresholds=(0.25, 0.10, 0.045),
-    min_stage_steps=1000,
+    upper_fracs=(0.15, 0.30, 0.50, 0.70, 0.85, 1.00),
+    pde_mean_thresholds=(0.16, 0.08, 0.04, 0.022, 0.015),
+    min_stage_steps=800,
 )
 
 # optimization_config: optimizer timing, L-BFGS settings, and R3 refresh behavior.
@@ -581,7 +581,7 @@ curriculum_time_upper = domain.t_min + curriculum_config.upper_fracs[0] * domain
 custom_collocation_points = build_gaussian_biased_collocation_points(
     sampler_config.num_domain_points,
     time_upper=curriculum_time_upper,
-    log_prefix="Curriculum stage 1/4",
+    log_prefix=f"Curriculum stage 1/{len(curriculum_config.upper_fracs)}",
 )
 
 print(
@@ -606,6 +606,12 @@ print(
     f"start={optimization_config.r3_retain_fraction:.2f}, "
     f"max={optimization_config.r3_max_retain_fraction:.2f}, "
     f"growth={optimization_config.r3_retain_growth_per_refresh:.2f}"
+)
+print(
+    "[INFO] Hard causal curriculum: "
+    f"upper_fracs={curriculum_config.upper_fracs}, "
+    f"pde_mean_thresholds={curriculum_config.pde_mean_thresholds}, "
+    f"min_stage_steps={curriculum_config.min_stage_steps}"
 )
 
 def global_power_stabilization_loss(device, dtype):
@@ -776,14 +782,19 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
     Gradually expands the maximum training time bounds (t_max) as the loss crosses predefined thresholds.
     Training PINNs incrementally over time avoids "getting stuck" in early bad local minima.
     """
-    def __init__(self, stage_upper_fracs, stage_loss_thresholds, min_stage_steps=1000):
+    def __init__(self, stage_upper_fracs, stage_pde_mean_thresholds, min_stage_steps=1000):
         super().__init__()
         # stage_upper_fracs: fractions of the full time domain visible at each stage.
         self.stage_upper_fracs = tuple(float(v) for v in stage_upper_fracs)
-        # stage_loss_thresholds: total-loss cutoffs that unlock the next stage.
-        self.stage_loss_thresholds = tuple(float(v) for v in stage_loss_thresholds)
+        # stage_pde_mean_thresholds: PDE-only mean-loss cutoffs that unlock the next stage.
+        self.stage_pde_mean_thresholds = tuple(float(v) for v in stage_pde_mean_thresholds)
         # min_stage_steps: minimum logged steps before a stage change is allowed.
         self.min_stage_steps = int(min_stage_steps)
+
+    def get_stage_metric(self, loss_train):
+        """Use only the two PDE channels so auxiliary priors cannot unlock stages early."""
+        loss_array = np.asarray(loss_train, dtype=np.float64)
+        return float(np.mean(loss_array[:2]))
 
     def on_train_begin(self):
         # stage_index: current curriculum stage number.
@@ -811,18 +822,18 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
 
         # loss_train: latest vector of loss channels logged by DeepXDE.
         loss_train = self.model.losshistory.loss_train[-1]
-        # total_loss: scalar used to decide whether the current stage is ready to expand.
-        total_loss = float(np.sum(loss_train))
-        # threshold: stage-specific target loss.
-        threshold = self.stage_loss_thresholds[self.stage_index]
-        if total_loss > threshold:
+        # stage_metric: PDE-only mean used to decide whether the current stage is ready to expand.
+        stage_metric = self.get_stage_metric(loss_train)
+        # threshold: stage-specific PDE target.
+        threshold = self.stage_pde_mean_thresholds[self.stage_index]
+        if stage_metric > threshold:
             return
 
         self.stage_index += 1
         self.stage_start_step = step
-        self.apply_stage(self.stage_index)
+        self.apply_stage(self.stage_index, step=step, stage_metric=stage_metric)
 
-    def apply_stage(self, stage_index):
+    def apply_stage(self, stage_index, step=None, stage_metric=None):
         global curriculum_time_upper
         # stage_frac: fraction of the full time window visible at this stage.
         stage_frac = self.stage_upper_fracs[stage_index]
@@ -837,11 +848,14 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
         )
         # Update DeepXDE dataset mid-training
         replace_model_anchors(self.model, new_anchors)
-        print(
+        message = (
             "[INFO] Curriculum expansion: "
             f"stage={stage_index + 1}/{len(self.stage_upper_fracs)}, "
             f"time_upper={curriculum_time_upper:.4f}"
         )
+        if stage_metric is not None:
+            message += f", step={step if step is not None else 0}, pde_mean={stage_metric:.3e}"
+        print(message)
 
     def set_final_stage(self, preserve_current_anchors=False):
         final_stage_index = len(self.stage_upper_fracs) - 1
@@ -1001,7 +1015,7 @@ loss_weights = list(optimization_config.loss_weights)
 # curriculum_callback: expands the visible time horizon as training improves.
 curriculum_callback = TimeCurriculumScheduler(
     stage_upper_fracs=curriculum_config.upper_fracs,
-    stage_loss_thresholds=curriculum_config.loss_thresholds,
+    stage_pde_mean_thresholds=curriculum_config.pde_mean_thresholds,
     min_stage_steps=curriculum_config.min_stage_steps,
 )
 # r3_callback: retains hard points and resamples easier ones during Adam.
