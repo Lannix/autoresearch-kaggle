@@ -283,8 +283,6 @@ ic_fourier_cache = {}
 power_stabilization_cache = {}
 # curriculum_time_upper: current maximum time visible to the curriculum sampler.
 curriculum_time_upper = float(domain.t_max)
-# power_prior_scale: dynamic multiplier used by HYP-14.1 to rebalance the auxiliary power loss.
-power_prior_scale = 1.0
 
 
 def get_ic_fourier_tensors(device, dtype):
@@ -708,7 +706,7 @@ def pde(x, y):
     # weighted_res_u/weighted_res_v: pointwise PDE residual channels.
     weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x, y)
     # power_stabilization: extra nonlocal prior that stabilizes late-time dynamics.
-    power_stabilization = power_prior_scale * global_power_stabilization_loss(x.device, x.dtype)
+    power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
     return[weighted_res_u, weighted_res_v, power_stabilization]
 
 
@@ -985,101 +983,6 @@ class R3Resampler(dde.callbacks.Callback):
         )
 
 
-class TMAPINNRefiner(dde.callbacks.Callback):
-    """
-    HYP-14.1 two-stage adaptive recipe.
-    Stage 1 reuses the current cautious curriculum.
-    Stage 2 performs one aggressive mini-batch candidate-screened refresh after the full time horizon opens,
-    while gently rebalancing the auxiliary power prior against the PDE channels.
-    """
-
-    def __init__(
-        self,
-        activation_step,
-        retain_fraction,
-        focused_fraction,
-        candidate_pool_size,
-        score_batch_size,
-        power_update_period,
-    ):
-        super().__init__()
-        self.activation_step = int(activation_step)
-        self.retain_fraction = float(retain_fraction)
-        self.focused_fraction = float(focused_fraction)
-        self.candidate_pool_size = int(candidate_pool_size)
-        self.score_batch_size = int(score_batch_size)
-        self.power_update_period = int(power_update_period)
-        self.has_updated = False
-        self.last_power_update_step = -1
-
-    def on_epoch_end(self):
-        global power_prior_scale
-        if curriculum_time_upper < domain.t_max - 1e-6:
-            return
-
-        step = int(self.model.train_state.step)
-        if step <= 0:
-            return
-
-        if self.model.losshistory.steps and step - self.last_power_update_step >= self.power_update_period:
-            loss_train = self.model.losshistory.loss_train[-1]
-            pde_mean = float(np.mean(loss_train[:2]))
-            power_loss = float(loss_train[2])
-            target_scale = np.clip((pde_mean / (power_loss + 1e-12)) ** 0.25 / 8.0, 0.75, 1.50)
-            power_prior_scale = 0.8 * power_prior_scale + 0.2 * target_scale
-            self.last_power_update_step = step
-            print(
-                f"[INFO] TMA power rebalance at step {step}: "
-                f"pde_mean={pde_mean:.3e}, power_loss={power_loss:.3e}, "
-                f"power_prior_scale={power_prior_scale:.3f}"
-            )
-
-        if self.has_updated or step < self.activation_step:
-            return
-
-        current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
-        if current_points.shape[0] == 0:
-            return
-
-        retain_count = max(1, int(round(current_points.shape[0] * self.retain_fraction)))
-        focused_count = max(1, int(round(current_points.shape[0] * self.focused_fraction)))
-        focused_count = min(focused_count, current_points.shape[0] - retain_count)
-        coverage_count = current_points.shape[0] - retain_count - focused_count
-
-        current_scores = residual_scores_for_points(current_points, self.score_batch_size)
-        retain_indices = np.argpartition(current_scores, -retain_count)[-retain_count:]
-        retained_points = current_points[retain_indices].astype(np.float32)
-        retained_scores = current_scores[retain_indices]
-
-        candidate_points = build_gaussian_biased_collocation_points(
-            self.candidate_pool_size,
-            time_upper=curriculum_time_upper,
-            log_prefix=f"TMA candidate pool step {step}",
-        )
-        candidate_scores = residual_scores_for_points(candidate_points, self.score_batch_size)
-        focused_indices = np.argpartition(candidate_scores, -focused_count)[-focused_count:]
-        focused_points = candidate_points[focused_indices].astype(np.float32)
-        focused_scores = candidate_scores[focused_indices]
-
-        coverage_points = build_gaussian_biased_collocation_points(
-            coverage_count,
-            time_upper=curriculum_time_upper,
-            log_prefix=f"TMA coverage step {step}",
-        )
-        updated_points = np.vstack((retained_points, focused_points, coverage_points)).astype(np.float32)
-        np.random.shuffle(updated_points)
-        replace_model_anchors(self.model, updated_points, sync_train_state=True)
-        self.has_updated = True
-
-        print(
-            f"[INFO] TMA focused refresh at step {step}: retained={retain_count}, "
-            f"focused={focused_count}, coverage={coverage_count}, "
-            f"retained_mean={float(retained_scores.mean()):.3e}, "
-            f"focused_mean={float(focused_scores.mean()):.3e}, "
-            f"power_prior_scale={power_prior_scale:.3f}"
-        )
-
-
 def model_uv(t_in, th_in, need_x=False):
     """Helper formatting output wrapper strictly used by `prepare.evaluate_mse`."""
     # DeepXDE inputs are concatenated [theta, time]
@@ -1101,14 +1004,13 @@ curriculum_callback = TimeCurriculumScheduler(
     stage_loss_thresholds=curriculum_config.loss_thresholds,
     min_stage_steps=curriculum_config.min_stage_steps,
 )
-# tma_callback: HYP-14.1 recipe with one focused mini-batch adaptive refresh plus power rebalance.
-tma_callback = TMAPINNRefiner(
-    activation_step=optimization_config.r3_period,
+# r3_callback: retains hard points and resamples easier ones during Adam.
+r3_callback = R3Resampler(
+    period=optimization_config.r3_period,
     retain_fraction=optimization_config.r3_retain_fraction,
-    focused_fraction=0.40,
-    candidate_pool_size=36000,
+    max_retain_fraction=optimization_config.r3_max_retain_fraction,
+    retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
-    power_update_period=500,
 )
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape
@@ -1122,7 +1024,7 @@ try:
     # train_state: DeepXDE object storing the latest training step and state.
     losshistory, train_state = model.train(
         iterations=100000,
-        callbacks=[time_callback_adam, curriculum_callback, tma_callback],
+        callbacks=[time_callback_adam, curriculum_callback, r3_callback],
         display_every=1000,
     )
     
@@ -1131,7 +1033,7 @@ try:
     # time_callback_lbfgs: hard wall-clock stop for the L-BFGS phase.
     time_callback_lbfgs = TimeBasedEarlyStopping(max_train_time)
     time_callback_lbfgs.start_time = t_start_training  # Base it on total elapsed time overall
-    curriculum_callback.set_final_stage(preserve_current_anchors=tma_callback.has_updated)
+    curriculum_callback.set_final_stage(preserve_current_anchors=r3_callback.has_updated)
 
     # Give L-BFGS more of the budget, but keep each PyTorch step short enough for callbacks to run.
     configure_pytorch_lbfgs(
