@@ -515,60 +515,6 @@ class MultiScaleFourierCore(torch.nn.Module):
         return self.network(self.encode(x))
 
 
-class SineLayer(torch.nn.Module):
-    """Small SIREN-style layer used for the HYP-13.2 high-frequency residual branch."""
-
-    def __init__(self, in_dim, out_dim, omega_0=8.0, is_first=False):
-        super().__init__()
-        # linear: affine map whose output is passed through a sine nonlinearity.
-        self.linear = torch.nn.Linear(int(in_dim), int(out_dim))
-        # omega_0: frequency scale controlling how oscillatory this layer can become.
-        self.omega_0 = float(omega_0)
-        # is_first: first SIREN layer uses a different initialization range.
-        self.is_first = bool(is_first)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        in_features = self.linear.in_features
-        if self.is_first:
-            bound = 1.0 / max(1, in_features)
-        else:
-            bound = math.sqrt(6.0 / max(1, in_features)) / self.omega_0
-        torch.nn.init.uniform_(self.linear.weight, -bound, bound)
-        torch.nn.init.uniform_(self.linear.bias, -bound, bound)
-
-    def forward(self, x):
-        return torch.sin(self.omega_0 * self.linear(x))
-
-
-class StabilizedSirenBranch(torch.nn.Module):
-    """
-    Tiny high-frequency correction branch for HYP-13.2.
-    It operates directly on normalized coordinates and is scaled as a residual on top of the
-    current winning MsFFN head so we don't repeat the old full-core sine failure.
-    """
-
-    def __init__(self, input_dim=2, hidden_dim=24, output_dim=2):
-        super().__init__()
-        # layer1/layer2: compact sine stack that can represent oscillatory corrections cheaply.
-        self.layer1 = SineLayer(input_dim, hidden_dim, omega_0=8.0, is_first=True)
-        self.layer2 = SineLayer(hidden_dim, hidden_dim, omega_0=4.0, is_first=False)
-        # output_layer: linear readout from the sinusoidal latent space back into (u, v).
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        self.layer1.reset_parameters()
-        self.layer2.reset_parameters()
-        torch.nn.init.xavier_uniform_(self.output_layer.weight)
-        torch.nn.init.zeros_(self.output_layer.bias)
-
-    def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        return self.output_layer(x)
-
-
 class NormalizedChainRuleNet(dde.nn.NN):
     """
     [DeepXDE Note for Beginners]: DeepXDE expects the network to subclass `dde.nn.NN`
@@ -586,10 +532,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
-        # siren_branch: tiny stabilized high-frequency residual branch for oscillatory correction.
-        self.siren_branch = StabilizedSirenBranch()
-        # siren_gain: keeps the sinusoidal branch as a small residual around the kept baseline.
-        self.siren_gain = torch.nn.Parameter(torch.tensor(0.05, dtype=torch.float32))
         # regularizer: DeepXDE compatibility field; unused in this script.
         self.regularizer = None
         # last_x_norm: cached normalized inputs used later for chain-rule derivatives.
@@ -613,8 +555,6 @@ class NormalizedChainRuleNet(dde.nn.NN):
     def forward_from_normalized(self, x_norm):
         # raw: unconstrained network correction predicted in normalized space.
         raw = self.core(x_norm)
-        # siren_correction: small oscillatory correction that targets missed high-frequency structure.
-        siren_correction = self.siren_gain * self.siren_branch(x_norm)
         # theta/time_coord: physical coordinates needed by the hard-constraint ansatz.
         theta, time_coord = self.denormalize_inputs(x_norm)
         # coeffs: cached Fourier tensors for exact IC reconstruction.
@@ -626,7 +566,7 @@ class NormalizedChainRuleNet(dde.nn.NN):
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
         # growth: time gate that is zero at t=t0 and gradually unlocks the NN correction.
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-        return torch.cat((u_exact, v_exact), dim=1) + growth * (raw + siren_correction)
+        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
 
     def forward(self, inputs):
         # We save normalized inputs so we can calculate exact derivatives via the chain rule later
@@ -645,10 +585,9 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN + stabilized SIREN branch: "
+    "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}, "
-    "siren_hidden=24, siren_gain_init=0.05"
+    f"features_per_scale={feature_config.features_per_scale}"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
