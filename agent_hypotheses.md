@@ -455,10 +455,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 
 ## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
 
-- [ ] **HYP-12.1: Lightweight PIKAN Core (Physics-Informed Kolmogorov-Arnold Networks)**
+- [x] **HYP-12.1: Lightweight PIKAN Core (Physics-Informed Kolmogorov-Arnold Networks)**
   - *Idea:* The 2026 SciML literature highlights PIKANs as a major improvement for PINNs by replacing fixed node activations with trainable edge functions, which may help the stiff LLE avoid the gradient pathologies seen in standard MLP cores.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Starting from the current `MultiScaleFourierCore`, replace the standard `nn.Linear + nn.Tanh()` stack with a lightweight KAN-style layer implemented locally, for example by adding a parallel trainable Fourier projection or localized RBF branch per layer so each neuron can adapt its activation landscape without pulling in a heavy external KAN dependency.
+  - *Outcome:* [DISCARD] | *Delta:* `+1.837851e-02 val_mse regression`
+  - *Notes:* Starting from the kept `HYP-12.4` baseline, replaced each hidden `tanh` activation inside `MultiScaleFourierCore` with a lightweight adaptive-basis layer: the baseline `tanh` response stayed in place, but every hidden neuron gained a small trainable Fourier branch and a localized RBF branch so the head could adapt its basis functions without a heavy external KAN implementation. The run stayed numerically stable, but it was much slower and heavier than expected: peak VRAM rose to `6166.6 MB`, Adam only reached step `2000` before the wall-clock split into L-BFGS, curriculum stage 3 never unlocked, and the winning step-`5000` R3 refresh never happened. Final `val_mse` regressed from `3.323696e-02` to `5.161547e-02`, so this first lightweight PIKAN formulation is a discard.
 
 - [x] **HYP-12.2: L-LAAF (Layer-wise Locally Adaptive Activation Functions)** [DISCARD]
   - *Idea:* DeepXDE guidance and recent PINN papers suggest L-LAAF can recover slopes and accelerate convergence by letting each layer scale its own activation steepness instead of relying on a fixed `tanh`.
