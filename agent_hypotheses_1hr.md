@@ -71,6 +71,11 @@ The strongest 30-minute evidence says the best model benefits from aggressive fu
   - *Outcome:* [DISCARD] | *Delta:* `+1.519373e-02 val_mse regression`
   - *Notes:* Starting from the kept `1HR-0.1` baseline, removed the global power stabilization loss from the active training objective, kept the true candidate-screened RAR logic from `1HR-6.3`, lowered `r3_period` from `5000` to `500`, and raised `r3_max_retain_fraction` from `0.30` to `0.50`. Mechanically the experiment behaved exactly as requested: the power prior was fully disabled, R3 started firing inside the earliest curriculum stage, and the callback refreshed anchors extremely often all the way through Adam, reaching step `11500` before handoff to L-BFGS. But the result still regressed badly from the kept `1HR-0.1` best `3.093994e-02` to `4.613367e-02`, even with flat VRAM (`2132.7 MB`) and `16837` total steps. The likely failure mode is that removing the power prior did not fix the underlying issue from `1HR-6.3`: the very frequent uniform-time true-RAR refreshes still over-concentrated training on local residual ridges and destabilized the otherwise strong static Gaussian-plus-causal collocation prior.
 
+- [ ] **1HR-6.5: Partitioned 50k Collocation with Refreshable R3 Pool**
+  - *Idea:* Keep the `02f5f42` no-power-prior true-RAR direction, but scale to `50000` anchors and split them into a fixed base plus a refreshable R3 pool so only the lowest-error refreshable slice is replaced each update.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This is a structured follow-up to `1HR-6.4`. The new design uses `50000` total anchors, with `40%` fixed Gaussian-plus-causal anchors and `60%` refreshable R3 anchors. R3 still runs every `500` steps, but it should update only the refreshable pool, preserving the strongest refreshable points and replacing only the lowest-error refreshable slice with true residual-screened candidates.
+
 ## Category 7: Optimization and Dynamic Balancing at 1 Hour
 Several optimization ideas were close or clearly stable, but they spent too much of the 30-minute budget before the model could exploit them.
 
