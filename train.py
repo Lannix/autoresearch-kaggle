@@ -242,7 +242,7 @@ feature_config = FeatureConfig(
     sigmas=(1.0, 10.0),
     features_per_scale=16,
     theta_harmonics=(1, 2, 3, 4, 5),
-    period_guess=0.9990,
+    period_guess=1.0000,
     time_harmonics=(1.0, 2.0),
 )
 
