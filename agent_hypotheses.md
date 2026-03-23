@@ -365,10 +365,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* [+7.842e-03 vs `3.376563e-02` best]
   - *Notes:* Starting from the kept HYP-11.2 baseline, the first retry at commit `285c01b` used `torch.nn.MultiheadAttention` over deterministic time-harmonic tokens and crashed immediately because PyTorch's fused scaled-dot-product attention backend on Kaggle T4 does not expose the higher-order backward path required by the PDE Hessians. I then retried the same idea with an explicit matmul-softmax-matmul attention block and a learned summary query, which removed the backend limitation and let the full DeepXDE run complete cleanly. The fixed version reached `val_mse = 4.160770e-02`, `peak_vram_mb = 2317.0`, `num_steps = 7364`, and `num_params = 79906`, so the crash is resolved but the architecture still underperforms the kept `HYP-11.2` baseline and is discarded.
 
-- [ ] **HYP-10.2: Wavelet-based PIKAN (Physics-Informed KAN)**
+- [x] **HYP-10.2: Wavelet-based PIKAN (Physics-Informed KAN)**
   - *Idea:* Implement a lightweight Kolmogorov-Arnold Network (KAN) where the edge activation functions are learnable wavelets (e.g., Morlet or Mexican Hat), rather than standard B-splines. Wavelets are mathematically superior for localizing the sharp peaks of a breather in the $\Theta$ domain. Keep the network extremely small (e.g., [2, 10, 10, 2]) to maximize speed.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [CRASH] | *Delta:* OOM before first logged step
+  - *Notes:* Replaced the tanh head with a compact Morlet-wavelet KAN stack on top of the winning MsFFN encoder. Kaggle crashed during the second-derivative PDE path with `torch.OutOfMemoryError`, reaching ~13.9 GiB allocated before the first logged step. Most likely next retry: remove normalization layers and/or shrink the wavelet edge tensors further.
 
 - [ ] **HYP-10.3: Complex-Valued Architecture with Phase Coupling**
   - *Idea:* The 1D LLE is a complex equation, but separating it into real ($u$) and imaginary ($v$) channels destroys the phase coupling in standard MLPs. Build a PyTorch module using `torch.complex64` weights. Apply complex-valued activations (e.g., Complex Tanh or modReLU) and output a single complex tensor, computing the residual natively in complex arithmetic before splitting into absolute errors for the loss.
