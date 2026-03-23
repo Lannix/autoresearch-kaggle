@@ -196,6 +196,31 @@ v0_cos_coeffs, v0_sin_coeffs = build_real_fourier_coeffs(v0_samples)
 # fourier_modes: integer mode indices 0,1,2,... for the Fourier series.
 fourier_modes = np.arange(u0_cos_coeffs.size, dtype=np.float32)
 
+
+def build_operator_ic_summary(max_modes=16):
+    """
+    Builds a compact fixed IC descriptor for the DeepONet-style branch net.
+    We keep only the leading Fourier modes so the operator branch stays lightweight.
+    """
+    # max_modes: number of leading Fourier coefficients retained from each IC channel.
+    max_modes = int(max_modes)
+
+    def slice_and_pad(values):
+        clipped = np.asarray(values[:max_modes], dtype=np.float32)
+        if clipped.size < max_modes:
+            clipped = np.pad(clipped, (0, max_modes - clipped.size))
+        return clipped
+
+    return np.concatenate(
+        (
+            slice_and_pad(u0_cos_coeffs),
+            slice_and_pad(u0_sin_coeffs),
+            slice_and_pad(v0_cos_coeffs),
+            slice_and_pad(v0_sin_coeffs),
+        ),
+        axis=0,
+    ).astype(np.float32)
+
 # domain: one object that groups the physical bounds, PDE constants, and normalization factors.
 domain = DomainConfig(
     t_min=t_min,
@@ -465,6 +490,28 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
         )
+
+        # operator_ic_summary: compact exact-IC descriptor fed to the branch net of the operator hybrid.
+        self.register_buffer(
+            "operator_ic_summary",
+            torch.tensor(build_operator_ic_summary(max_modes=16), dtype=torch.float32).view(1, -1),
+        )
+        # operator_basis_dim: number of low-rank trunk basis functions in the operator correction.
+        self.operator_basis_dim = 16
+        # operator_gain: keeps the operator residual as a small correction around the proven baseline head.
+        self.operator_gain = torch.nn.Parameter(torch.tensor(0.10, dtype=torch.float32))
+        # operator_branch: maps the fixed IC descriptor to coefficients of the operator basis.
+        self.operator_branch = torch.nn.Sequential(
+            torch.nn.Linear(self.operator_ic_summary.shape[1], 32),
+            torch.nn.Tanh(),
+            torch.nn.Linear(32, self.operator_basis_dim * output_dim),
+        )
+        # operator_trunk: maps the encoded pointwise features to the same operator basis.
+        self.operator_trunk = torch.nn.Sequential(
+            torch.nn.Linear(encoded_dim, 32),
+            torch.nn.Tanh(),
+            torch.nn.Linear(32, self.operator_basis_dim),
+        )
         
         # Build the standard MLP on top of the Fourier features
         # layer_dims: widths of every linear layer in the MLP head.
@@ -479,6 +526,14 @@ class MultiScaleFourierCore(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        for module in self.operator_branch:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
+        for module in self.operator_trunk:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
         for module in self.network:
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
@@ -512,7 +567,19 @@ class MultiScaleFourierCore(torch.nn.Module):
         return torch.cat(encoded, dim=1)
 
     def forward(self, x):
-        return self.network(self.encode(x))
+        # encoded: shared pointwise feature bank used by both the base PINN head and the operator hybrid.
+        encoded = self.encode(x)
+        # base: original MsFFN-style pointwise correction branch.
+        base = self.network(encoded)
+        # branch_coeffs: global operator coefficients extracted from the exact IC descriptor.
+        branch_coeffs = self.operator_branch(
+            self.operator_ic_summary.to(device=encoded.device, dtype=encoded.dtype)
+        ).view(self.operator_basis_dim, -1)
+        # trunk_basis: pointwise basis functions evaluated at the current coordinates.
+        trunk_basis = self.operator_trunk(encoded)
+        # operator_residual: DeepONet-style low-rank operator correction added to the pointwise head.
+        operator_residual = trunk_basis @ branch_coeffs
+        return base + self.operator_gain * operator_residual
 
 
 class NormalizedChainRuleNet(dde.nn.NN):
@@ -585,9 +652,10 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN-style core: "
+    "[INFO] Operator-hybrid core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}"
+    f"features_per_scale={feature_config.features_per_scale}, "
+    "operator_basis_dim=16, branch_modes=16"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
