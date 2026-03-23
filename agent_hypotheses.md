@@ -474,3 +474,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Idea:* Transolver-style tiling and local state extraction may help the network focus on the localized breather structure without forcing the first layer to learn all local context from raw coordinates alone.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Before feeding points into `MultiScaleFourierCore`, add a lightweight 1D spatial sliding-window feature extractor, for example a `torch.nn.Conv1d` path with circular padding over the periodic theta domain, then concatenate those local spatial descriptors with the standard coordinate and Fourier inputs. This is a Transolver-inspired local-physics feature path rather than full attention.
+
+- [ ] **HYP-12.7: Ultra-Exploratory First R3 Refresh**
+  - *Idea:* `HYP-12.4` improved the best result by lowering the first full-domain R3 retain fraction from `0.20` to `0.10`. Since the current budget still only allows one R3 event, the next logical test is an even more exploratory one-shot refresh.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Keep the progressive R3 machinery intact, but lower the starting retain fraction further to `0.05` while leaving the later-growth logic available in case future runs ever reach a second refresh. This directly tests whether the current best model wants an even larger post-curriculum anchor turnover.
