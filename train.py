@@ -423,96 +423,11 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     return collocation_points
 
 
-class WaveletKANLayer(torch.nn.Module):
-    """
-    Lightweight KAN-style layer.
-    Each output neuron keeps a standard linear path plus a learned Morlet wavelet on every input edge.
-    """
-
-    def __init__(self, input_dim, output_dim, morlet_omega=1.75):
-        super().__init__()
-        # input_dim/output_dim: layer widths used to size the edge-wise wavelet parameters.
-        self.input_dim = int(input_dim)
-        self.output_dim = int(output_dim)
-        # morlet_omega: fixed carrier frequency of the Morlet wavelet.
-        self.morlet_omega = float(morlet_omega)
-        # base_linear: low-frequency linear path that keeps optimization stable.
-        self.base_linear = torch.nn.Linear(self.input_dim, self.output_dim)
-        # wavelet_weight: per-edge coefficient that scales the learned wavelet response.
-        self.wavelet_weight = torch.nn.Parameter(torch.empty(self.output_dim, self.input_dim))
-        # wavelet_shift: per-edge center that moves the wavelet along the input axis.
-        self.wavelet_shift = torch.nn.Parameter(torch.zeros(self.output_dim, self.input_dim))
-        # wavelet_log_scale: unconstrained parameter turned into a positive scale with softplus.
-        self.wavelet_log_scale = torch.nn.Parameter(torch.zeros(self.output_dim, self.input_dim))
-
-    def reset_parameters(self):
-        # Keep the linear path comparable to a normal MLP initialization.
-        torch.nn.init.xavier_uniform_(self.base_linear.weight)
-        torch.nn.init.zeros_(self.base_linear.bias)
-        # Start the wavelet branch small so Adam can first follow the stable linear path.
-        torch.nn.init.normal_(self.wavelet_weight, mean=0.0, std=0.05)
-        torch.nn.init.zeros_(self.wavelet_shift)
-        torch.nn.init.constant_(self.wavelet_log_scale, -0.2)
-
-    def forward(self, x):
-        # x_expanded: input broadcast so every output neuron owns its own edge parameters.
-        x_expanded = x.unsqueeze(1)
-        # scale: strictly positive wavelet dilation factor.
-        scale = torch.nn.functional.softplus(self.wavelet_log_scale) + 1e-4
-        # centered: normalized input coordinate in each edge-local wavelet frame.
-        centered = (x_expanded - self.wavelet_shift.unsqueeze(0)) * scale.unsqueeze(0)
-        # morlet: oscillatory localized response that can represent sharp peaks cheaply.
-        morlet = torch.exp(-0.5 * centered.square()) * torch.cos(self.morlet_omega * centered)
-        # wavelet_sum: aggregated edge activations for each output neuron.
-        wavelet_sum = (morlet * self.wavelet_weight.unsqueeze(0)).sum(dim=2)
-        return self.base_linear(x) + wavelet_sum
-
-
-class WaveletKANHead(torch.nn.Module):
-    """
-    Small wavelet-based head used on top of the Fourier encoder.
-    This keeps the current strong input representation while replacing the dense tanh stack
-    with edge-wise learned wavelets, which is the core HYP-10.2 idea.
-    """
-
-    def __init__(self, input_dim, hidden_widths, output_dim):
-        super().__init__()
-        # hidden_widths: narrow hidden sizes that keep the PIKAN variant lightweight.
-        self.hidden_widths = tuple(int(width) for width in hidden_widths)
-        # hidden_layers: wavelet KAN layers used for the nonlinear hidden stack.
-        self.hidden_layers = torch.nn.ModuleList()
-        # layer_norms: mild normalization after each hidden layer to stabilize LBFGS.
-        self.layer_norms = torch.nn.ModuleList()
-
-        previous_dim = int(input_dim)
-        for hidden_dim in self.hidden_widths:
-            self.hidden_layers.append(WaveletKANLayer(previous_dim, hidden_dim))
-            self.layer_norms.append(torch.nn.LayerNorm(hidden_dim))
-            previous_dim = hidden_dim
-
-        # output_layer: simple linear readout from the final wavelet features into (u, v).
-        self.output_layer = torch.nn.Linear(previous_dim, int(output_dim))
-
-    def reset_parameters(self):
-        for layer in self.hidden_layers:
-            layer.reset_parameters()
-        for norm in self.layer_norms:
-            norm.reset_parameters()
-        torch.nn.init.xavier_uniform_(self.output_layer.weight)
-        torch.nn.init.zeros_(self.output_layer.bias)
-
-    def forward(self, x):
-        for layer, norm in zip(self.hidden_layers, self.layer_norms):
-            x = norm(layer(x))
-        return self.output_layer(x)
-
-
 class MultiScaleFourierCore(torch.nn.Module):
     """
     Standard PINNs suffer from 'spectral bias' (they struggle to learn high frequencies).
     This core projects the inputs into a series of Sine/Cosine waves at different scales (sigmas)
     and specific guessed frequencies (harmonics) to give the network a "head start".
-    HYP-10.2 keeps this strong encoder but swaps the usual tanh MLP for a small wavelet-KAN head.
     """
     def __init__(self, input_dim=2, hidden_dim=128, num_hidden_layers=5, output_dim=2, 
                  sigmas=(1.0, 10.0), features_per_scale=16):
@@ -550,20 +465,24 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
         )
-
-        # hidden_widths: compact wavelet-KAN widths inspired by the roadmap suggestion
-        # to keep the architecture small and fast.
-        hidden_widths = (32, 32)
-        # wavelet_head: light Morlet-wavelet KAN stack that replaces the old tanh MLP head.
-        self.network = WaveletKANHead(
-            input_dim=encoded_dim,
-            hidden_widths=hidden_widths,
-            output_dim=output_dim,
-        )
+        
+        # Build the standard MLP on top of the Fourier features
+        # layer_dims: widths of every linear layer in the MLP head.
+        layer_dims =[encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        # layers: Python list used to build the final torch.nn.Sequential block.
+        layers = []
+        for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
+            layers.append(torch.nn.Linear(in_dim, out_dim))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
+        self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
     def reset_parameters(self):
-        self.network.reset_parameters()
+        for module in self.network:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -666,11 +585,10 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN encoder: "
+    "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
     f"features_per_scale={feature_config.features_per_scale}"
 )
-print("[INFO] Wavelet PIKAN head: hidden_widths=(32, 32), wavelet=Morlet")
 print(
     "[INFO] Breather-tuned Fourier features: "
     f"theta_modes={feature_config.theta_harmonics}, "
