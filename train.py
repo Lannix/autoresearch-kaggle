@@ -230,7 +230,7 @@ geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
 # sampler_config: controls the custom Gaussian/Beta collocation sampler.
 sampler_config = SamplerConfig(
-    num_domain_points=45000,
+    num_domain_points=30000,
     gaussian_fraction=0.80,
     gaussian_sigma=0.15 * domain.theta_span,
     time_beta_a=1.0,
