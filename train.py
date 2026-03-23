@@ -515,125 +515,6 @@ class MultiScaleFourierCore(torch.nn.Module):
         return self.network(self.encode(x))
 
 
-class ComplexLinear(torch.nn.Module):
-    """Complex-valued linear layer built from paired real weight matrices."""
-
-    def __init__(self, input_dim, output_dim):
-        super().__init__()
-        # real_linear/imag_linear: real and imaginary affine maps that define the complex weights.
-        self.real_linear = torch.nn.Linear(int(input_dim), int(output_dim))
-        self.imag_linear = torch.nn.Linear(int(input_dim), int(output_dim))
-
-    def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.real_linear.weight)
-        torch.nn.init.zeros_(self.real_linear.bias)
-        torch.nn.init.xavier_uniform_(self.imag_linear.weight)
-        torch.nn.init.zeros_(self.imag_linear.bias)
-
-    def forward(self, z):
-        # z_real/z_imag: explicit real and imaginary parts of the complex input tensor.
-        z_real = z.real
-        z_imag = z.imag
-        # out_real/out_imag: complex matrix-vector product in real-imaginary form.
-        out_real = self.real_linear(z_real) - self.imag_linear(z_imag)
-        out_imag = self.real_linear(z_imag) + self.imag_linear(z_real)
-        return torch.complex(out_real, out_imag)
-
-
-class ComplexModReLU(torch.nn.Module):
-    """modReLU keeps phase information while applying a stable magnitude gate."""
-
-    def __init__(self, width):
-        super().__init__()
-        # bias: per-channel magnitude threshold in the modReLU nonlinearity.
-        self.bias = torch.nn.Parameter(torch.full((int(width),), -0.05))
-
-    def forward(self, z):
-        # magnitude: channel magnitudes used to gate the complex activations.
-        magnitude = torch.abs(z)
-        # scale: non-negative shrink/expand factor that preserves each channel's phase.
-        scale = torch.relu(magnitude + self.bias) / (magnitude + 1e-6)
-        return z * scale
-
-
-class ComplexResidualBlock(torch.nn.Module):
-    """Small complex residual block used by the HYP-10.3 phase-coupled head."""
-
-    def __init__(self, width):
-        super().__init__()
-        # complex_linear: learned complex mixing within the latent phase-coupled representation.
-        self.complex_linear = ComplexLinear(width, width)
-        # activation: phase-preserving complex nonlinearity.
-        self.activation = ComplexModReLU(width)
-
-    def reset_parameters(self):
-        self.complex_linear.reset_parameters()
-        torch.nn.init.constant_(self.activation.bias, -0.05)
-
-    def forward(self, z):
-        return z + self.activation(self.complex_linear(z))
-
-
-class ComplexPhaseCoupledCore(torch.nn.Module):
-    """
-    HYP-10.3 complex-valued head.
-    The winning real Fourier encoder is kept intact, but the head now mixes features in a compact
-    complex latent space so amplitude and phase stay coupled throughout the residual branch.
-    """
-
-    def __init__(self, input_dim=2, latent_width=32, num_complex_blocks=2, sigmas=(1.0, 10.0), features_per_scale=16):
-        super().__init__()
-        # encoder: reuse the proven Fourier-feature bank from the real baseline.
-        self.encoder = MultiScaleFourierCore(
-            input_dim=input_dim,
-            hidden_dim=128,
-            num_hidden_layers=5,
-            output_dim=2,
-            sigmas=sigmas,
-            features_per_scale=features_per_scale,
-        )
-        # Strip the unused real-valued output head so only the shared encoder buffers remain.
-        self.encoder.network = torch.nn.Identity()
-        # encoded_dim: size of the shared real feature bank produced by the encoder.
-        encoded_dim = (
-            input_dim
-            + 2 * self.encoder.features_per_scale * len(self.encoder.sigmas)
-            + 2 * len(self.encoder.theta_harmonics)
-            + 2 * len(self.encoder.time_harmonics)
-        )
-        # real_to_complex_*: initial projection from the real feature bank into a complex latent space.
-        self.real_to_complex_real = torch.nn.Linear(encoded_dim, latent_width)
-        self.real_to_complex_imag = torch.nn.Linear(encoded_dim, latent_width)
-        # complex_blocks: small stack of phase-coupled complex residual blocks.
-        self.complex_blocks = torch.nn.ModuleList(
-            ComplexResidualBlock(latent_width) for _ in range(int(num_complex_blocks))
-        )
-        # output_head: complex readout that predicts one complex residual field value.
-        self.output_head = ComplexLinear(latent_width, 1)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        torch.nn.init.xavier_uniform_(self.real_to_complex_real.weight)
-        torch.nn.init.zeros_(self.real_to_complex_real.bias)
-        torch.nn.init.xavier_uniform_(self.real_to_complex_imag.weight)
-        torch.nn.init.zeros_(self.real_to_complex_imag.bias)
-        for block in self.complex_blocks:
-            block.reset_parameters()
-        self.output_head.reset_parameters()
-
-    def forward(self, x):
-        # encoded: real multi-scale Fourier features from the kept baseline encoder.
-        encoded = self.encoder.encode(x)
-        # latent: compact complex representation where phase coupling is preserved explicitly.
-        latent = torch.complex(
-            self.real_to_complex_real(encoded),
-            self.real_to_complex_imag(encoded),
-        )
-        for block in self.complex_blocks:
-            latent = block(latent)
-        return self.output_head(latent)
-
-
 class NormalizedChainRuleNet(dde.nn.NN):
     """
     [DeepXDE Note for Beginners]: DeepXDE expects the network to subclass `dde.nn.NN`
@@ -646,8 +527,8 @@ class NormalizedChainRuleNet(dde.nn.NN):
     """
     def __init__(self):
         super().__init__()
-        # core: compact complex-valued head built on top of the winning MsFFN Fourier encoder.
-        self.core = ComplexPhaseCoupledCore(
+        # core: MsFFN-style feature encoder followed by a standard MLP head.
+        self.core = MultiScaleFourierCore(
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
@@ -672,8 +553,8 @@ class NormalizedChainRuleNet(dde.nn.NN):
         return theta, time_coord
 
     def forward_from_normalized(self, x_norm):
-        # raw_complex: unconstrained complex residual predicted in normalized space.
-        raw_complex = self.core(x_norm)
+        # raw: unconstrained network correction predicted in normalized space.
+        raw = self.core(x_norm)
         # theta/time_coord: physical coordinates needed by the hard-constraint ansatz.
         theta, time_coord = self.denormalize_inputs(x_norm)
         # coeffs: cached Fourier tensors for exact IC reconstruction.
@@ -683,13 +564,9 @@ class NormalizedChainRuleNet(dde.nn.NN):
         # u_exact/v_exact: exact real and imaginary initial-condition signals.
         u_exact = reconstruct_fourier_signal(theta, coeffs["u_cos"], coeffs["u_sin"], coeffs)
         v_exact = reconstruct_fourier_signal(theta, coeffs["v_cos"], coeffs["v_sin"], coeffs)
-        # psi_exact: complex exact initial field used by the hard-constraint ansatz.
-        psi_exact = torch.complex(u_exact, v_exact)
         # growth: time gate that is zero at t=t0 and gradually unlocks the NN correction.
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
-        # psi: final complex prediction after exact IC anchoring and complex residual correction.
-        psi = psi_exact + growth * raw_complex
-        return torch.cat((psi.real, psi.imag), dim=1)
+        return torch.cat((u_exact, v_exact), dim=1) + growth * raw
 
     def forward(self, inputs):
         # We save normalized inputs so we can calculate exact derivatives via the chain rule later
@@ -708,10 +585,9 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] Complex phase-coupled core: "
+    "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}, "
-    "latent_width=32, blocks=2, activation=modReLU"
+    f"features_per_scale={feature_config.features_per_scale}"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
@@ -806,33 +682,12 @@ def compute_weighted_pde_residuals(x, y=None):
     du_dth2 = du_dth2_norm * (domain.theta_norm_scale ** 2)
     dv_dth2 = dv_dth2_norm * (domain.theta_norm_scale ** 2)
 
-    # The actual physical residuals of the Lugiato-Lefever Equation (LLE), assembled in complex form.
-    # psi: complex field envelope that keeps amplitude and phase coupled in the residual.
-    psi = torch.complex(u, v)
-    # psi_t/psi_th2: complex first-time and second-theta derivatives.
-    psi_t = torch.complex(du_dt, dv_dt)
-    psi_th2 = torch.complex(du_dth2, dv_dth2)
+    # The actual physical residuals of the Lugiato-Lefever Equation (LLE)
     # intensity: local optical intensity |psi|^2.
-    intensity = torch.abs(psi).square()
-    # complex_i: explicit imaginary unit with the correct tensor dtype/device.
-    complex_i = torch.complex(torch.zeros_like(u), torch.ones_like(v))
-    # linear_decay: the native complex linear LLE factor (1 + i zeta).
-    linear_decay = torch.complex(torch.ones_like(u), torch.full_like(v, domain.zeta))
-    # pump: complex drive term in the native LLE form.
-    pump = torch.complex(
-        torch.full_like(u, domain.f),
-        torch.zeros_like(v),
-    )
-    # res_complex: native complex LLE mismatch before it is split for DeepXDE loss channels.
-    res_complex = psi_t - (
-        -linear_decay * psi
-        + 0.5 * complex_i * psi_th2
-        + complex_i * intensity * psi
-        + pump
-    )
-    # res_u/res_v: real-valued channels returned to DeepXDE after native complex assembly.
-    res_u = res_complex.real
-    res_v = res_complex.imag
+    intensity = u.square() + v.square()
+    # res_u/res_v: real and imaginary PDE mismatches that training tries to drive to zero.
+    res_u = du_dt - (-u + domain.zeta * v - 0.5 * dv_dth2 - intensity * v + domain.f)
+    res_v = dv_dt - (-v - domain.zeta * u + 0.5 * du_dth2 + intensity * u)
     
     # Causal weighting penalizes early-time errors more strictly than late-time errors
     # time_frac: physical time normalized into [0, 1].
