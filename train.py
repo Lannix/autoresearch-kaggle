@@ -262,7 +262,7 @@ curriculum_config = CurriculumConfig(
 
 # optimization_config: optimizer timing, L-BFGS settings, and R3 refresh behavior.
 optimization_config = OptimizationConfig(
-    eval_reserve=45,
+    eval_reserve=90,
     adam_fraction=0.60,
     lbfgs_total_iters=5000,
     lbfgs_inner_iters=250,

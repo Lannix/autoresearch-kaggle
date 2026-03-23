@@ -96,11 +96,11 @@ def main():
         json.dump(metadata, f, indent=2)
         
     # ---------------------------------------------------------
-    # 3. Push to Kaggle with T4 and 40min timeout
+    # 3. Push to Kaggle with T4 and 70min timeout
     # ---------------------------------------------------------
-    safe_print(f"[INFO] Pushing job to Kaggle ({run_id}) with T4 and 40min timeout...")
+    safe_print(f"[INFO] Pushing job to Kaggle ({run_id}) with T4 and 70min timeout...")
     
-    code, out, err = run_cmd(f'kaggle kernels push -p {submit_dir} --accelerator NvidiaTeslaT4 --timeout 2400')
+    code, out, err = run_cmd(f'kaggle kernels push -p {submit_dir} --accelerator NvidiaTeslaT4 --timeout 4200')
     if code != 0:
         safe_print(f"[ERROR] Kernel push failed. Code: {code}")
         safe_print(f"STDOUT: {out.strip()}\nSTDERR: {err.strip()}")
