@@ -12,9 +12,10 @@
 
 ## 2026-03-23 - HYP-10.2 wavelet PIKAN core
 - Commit: `e77ae32`
-- Status: `OPEN`
+- Retry commit: `970365b`
+- Status: `FIXED`
 - Summary: A compact Morlet-wavelet KAN head on top of the winning MsFFN encoder crashed almost immediately on Kaggle.
 - Root cause: The edge-wise wavelet tensors created a much larger higher-order autograd graph than the plain MLP head. DeepXDE hit the second-theta-derivative path in `compute_weighted_pde_residuals` and exhausted T4 memory before the first logged training step.
 - Evidence: `torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 294.00 MiB ... 13.92 GiB is allocated by PyTorch`
-- Resolution: Not fixed in this run. The experiment is being reverted to the kept `HYP-12.4` baseline.
-- Next action: If retried, first remove `LayerNorm` from the wavelet head and/or reduce the wavelet edge tensor sizes so the Hessian path stays within T4 memory.
+- Resolution: Replaced the edge-wise wavelet tensors with a much cheaper projected-wavelet head using only per-neuron Morlet parameters and hidden widths `(10, 10)`. Kaggle then completed normally with `peak_vram_mb = 1000.4` and no autograd/OOM failure.
+- Next action: None for crash triage. The backend/memory issue is fixed; the retry was discarded only on accuracy (`val_mse = 5.882751e-02`).

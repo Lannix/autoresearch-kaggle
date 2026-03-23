@@ -367,8 +367,8 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
 
 - [x] **HYP-10.2: Wavelet-based PIKAN (Physics-Informed KAN)**
   - *Idea:* Implement a lightweight Kolmogorov-Arnold Network (KAN) where the edge activation functions are learnable wavelets (e.g., Morlet or Mexican Hat), rather than standard B-splines. Wavelets are mathematically superior for localizing the sharp peaks of a breather in the $\Theta$ domain. Keep the network extremely small (e.g., [2, 10, 10, 2]) to maximize speed.
-  - *Outcome:* [CRASH] | *Delta:* OOM before first logged step
-  - *Notes:* Replaced the tanh head with a compact Morlet-wavelet KAN stack on top of the winning MsFFN encoder. Kaggle crashed during the second-derivative PDE path with `torch.OutOfMemoryError`, reaching ~13.9 GiB allocated before the first logged step. Most likely next retry: remove normalization layers and/or shrink the wavelet edge tensors further.
+  - *Outcome:* [DISCARD] | *Delta:* +2.559055e-02
+  - *Notes:* First attempt crashed from CUDA OOM because an edge-wise Morlet head made the second-derivative graph too large. The retry fixed the crash by switching to a projected-wavelet head with per-neuron wavelet parameters and widths `(10, 10)`. Kaggle completed cleanly with only `1000.4 MB` peak VRAM and `14914` steps, but final `val_mse = 5.882751e-02`, much worse than the kept `HYP-12.4` baseline `3.323696e-02`.
 
 - [ ] **HYP-10.3: Complex-Valued Architecture with Phase Coupling**
   - *Idea:* The 1D LLE is a complex equation, but separating it into real ($u$) and imaginary ($v$) channels destroys the phase coupling in standard MLPs. Build a PyTorch module using `torch.complex64` weights. Apply complex-valued activations (e.g., Complex Tanh or modReLU) and output a single complex tensor, computing the residual natively in complex arithmetic before splitting into absolute errors for the loss.
