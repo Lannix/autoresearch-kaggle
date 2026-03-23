@@ -423,62 +423,6 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     return collocation_points
 
 
-def build_local_adaptive_refresh_points(retained_points, num_points, time_upper=None, log_prefix="Adaptive"):
-    """Resamples new anchors around hard retained points while preserving some global coverage."""
-    # time_upper: current curriculum-dependent time ceiling for sampling.
-    time_upper = float(domain.t_max if time_upper is None else time_upper)
-    retained_points = np.asarray(retained_points, dtype=np.float32)
-    if num_points <= 0:
-        return np.empty((0, 2), dtype=np.float32)
-    if retained_points.shape[0] == 0:
-        return build_gaussian_biased_collocation_points(num_points, time_upper=time_upper, log_prefix=log_prefix)
-
-    # local_fraction: how much of the refresh is concentrated near currently hard anchors.
-    local_fraction = 0.60
-    # local_count/global_count: split between adaptive local jitter and broad global exploration.
-    local_count = int(round(num_points * local_fraction))
-    global_count = num_points - local_count
-
-    # base_indices: retained hard anchors used as local resampling centers.
-    base_indices = np.random.randint(0, retained_points.shape[0], size=local_count)
-    base_points = retained_points[base_indices]
-
-    # theta_noise: local periodic exploration around hard theta regions.
-    theta_noise = np.random.normal(
-        loc=0.0,
-        scale=0.35 * sampler_config.gaussian_sigma,
-        size=(local_count, 1),
-    ).astype(np.float32)
-    # time_noise: local exploration along the currently unlocked time horizon.
-    time_noise = np.random.normal(
-        loc=0.0,
-        scale=0.06 * max(time_upper - domain.t_min, 1e-6),
-        size=(local_count, 1),
-    ).astype(np.float32)
-
-    # local_theta/local_time: jittered local points centered on retained hard anchors.
-    local_theta = wrap_theta_to_domain(base_points[:, 0:1] + theta_noise).astype(np.float32)
-    local_time = np.clip(base_points[:, 1:2] + time_noise, domain.t_min, time_upper).astype(np.float32)
-    local_points = np.hstack((local_theta, local_time)).astype(np.float32)
-
-    # global_points: fallback broad coverage from the proven baseline sampler.
-    global_points = build_gaussian_biased_collocation_points(
-        global_count,
-        time_upper=time_upper,
-        log_prefix=f"{log_prefix} global fallback",
-    )
-    refreshed_points = np.vstack((local_points, global_points)).astype(np.float32)
-    np.random.shuffle(refreshed_points)
-
-    print(
-        f"[INFO] {log_prefix} local refresh: "
-        f"{local_count} local + {global_count} global points, "
-        f"theta_jitter={0.35 * sampler_config.gaussian_sigma:.4f}, "
-        f"time_jitter={0.06 * max(time_upper - domain.t_min, 1e-6):.4f}"
-    )
-    return refreshed_points
-
-
 class MultiScaleFourierCore(torch.nn.Module):
     """
     Standard PINNs suffer from 'spectral bias' (they struggle to learn high frequencies).
@@ -1015,9 +959,8 @@ class R3Resampler(dde.callbacks.Callback):
         # Generate fresh replacement points
         # resampled_count: number of anchors replaced with new samples.
         resampled_count = current_points.shape[0] - retain_count
-        # refreshed_points: new anchors sampled near hard retained points plus a global fallback.
-        refreshed_points = build_local_adaptive_refresh_points(
-            retained_points,
+        # refreshed_points: new anchors sampled from the winning biased sampler.
+        refreshed_points = build_gaussian_biased_collocation_points(
             resampled_count,
             time_upper=curriculum_time_upper,
             log_prefix=f"R3 refresh step {step}",
