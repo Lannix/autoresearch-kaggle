@@ -475,7 +475,7 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* Before feeding points into `MultiScaleFourierCore`, add a lightweight 1D spatial sliding-window feature extractor, for example a `torch.nn.Conv1d` path with circular padding over the periodic theta domain, then concatenate those local spatial descriptors with the standard coordinate and Fourier inputs. This is a Transolver-inspired local-physics feature path rather than full attention.
 
-- [ ] **HYP-12.7: Ultra-Exploratory First R3 Refresh**
+- [x] **HYP-12.7: Ultra-Exploratory First R3 Refresh** [DISCARD]
   - *Idea:* `HYP-12.4` improved the best result by lowering the first full-domain R3 retain fraction from `0.20` to `0.10`. Since the current budget still only allows one R3 event, the next logical test is an even more exploratory one-shot refresh.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* Keep the progressive R3 machinery intact, but lower the starting retain fraction further to `0.05` while leaving the later-growth logic available in case future runs ever reach a second refresh. This directly tests whether the current best model wants an even larger post-curriculum anchor turnover.
+  - *Outcome:* `DISCARD` | *Delta:* `+8.854700e-04 val_mse regression`
+  - *Notes:* Kept the new progressive R3 machinery from `HYP-12.4`, but lowered the first-refresh retain fraction from `0.10` to `0.05` so the single full-domain R3 event at step `5000` preserved only `1500 / 30000` hardest anchors and resampled the remaining `95%`. The run stayed fully stable, the usual curriculum still reached the full domain by step `4000`, peak VRAM remained flat at `2133.1 MB`, and the retained anchors were indeed sharper than the winning `0.10` variant (`retained_mean = 3.173e-01` versus `2.499e-01`). Even so, final `val_mse` regressed from `3.323696e-02` to `3.412243e-02` with `9507` total steps, which suggests that `0.05` throws away too much useful full-domain structure and overshoots the exploration sweet spot discovered by `HYP-12.4`.
