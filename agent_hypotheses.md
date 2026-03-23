@@ -448,6 +448,11 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* `DISCARD` | *Delta:* `+1.387660e-03 val_mse regression`
   - *Notes:* Starting from the kept `HYP-12.4` baseline, changed only the deterministic time-feature period guess from `0.9990` to `1.0000` while leaving the random MsFFN scales, theta harmonics, curriculum schedule, and progressive one-shot R3 refresh unchanged. The run stayed fully stable, peak VRAM remained flat at `2133.1 MB`, the curriculum still reached the full domain by step `4000`, and the step-`5000` R3 refresh still fired on schedule with slightly sharper retained residuals (`retained_mean = 2.864e-01`). Even so, final `val_mse` regressed from `3.323696e-02` to `3.462462e-02` with `9450` total steps, so the original slightly detuned period guess `0.9990` remains better than exact unit period in the current deterministic Fourier prior.
 
+- [ ] **HYP-11.11: Denser Static-and-R3 Collocation Set**
+  - *Idea:* The current winner still uses only `30000` PDE anchors per stage, which may under-resolve the sharp breather core once the curriculum opens to the full domain. Increase the anchor count while preserving the winning Gaussian-plus-uniform theta bias, `Beta(1, 3)` time bias, curriculum schedule, and progressive one-shot R3 logic.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* Start with a moderate increase rather than a full 2x jump so Adam should still reach the full-domain step-`5000` R3 refresh under the same Kaggle time budget. The cleanest first test is `45000` anchors instead of `30000`.
+
 ## Phase 12: Advanced 2026 SciML Architectures & Dynamic Weighting
 
 - [ ] **HYP-12.1: Lightweight PIKAN Core (Physics-Informed Kolmogorov-Arnold Networks)**
