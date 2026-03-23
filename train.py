@@ -187,6 +187,8 @@ class OptimizationConfig:
     r3_max_retain_fraction: float
     r3_retain_growth_per_refresh: float
     r3_score_batch_size: int
+    r3_candidate_pool_multiplier: int
+    r3_uniform_noise_fraction: float
     loss_weights: tuple[float, float, float]
 
 # Pre-calculate Fourier modes for exact IC reconstruction
@@ -271,6 +273,8 @@ optimization_config = OptimizationConfig(
     r3_max_retain_fraction=0.30,
     r3_retain_growth_per_refresh=0.10,
     r3_score_batch_size=1024,
+    r3_candidate_pool_multiplier=5,
+    r3_uniform_noise_fraction=0.05,
     loss_weights=(3.0, 3.0, 0.5),
 )
 
@@ -420,6 +424,29 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
         f"time_beta=({sampler_config.time_beta_a:.1f}, {sampler_config.time_beta_b:.1f}), "
         f"time_upper={time_upper:.4f}"
     )
+    return collocation_points
+
+
+def build_uniform_collocation_points(num_points, time_upper=None, log_prefix=None):
+    """Build uniformly distributed [theta, time] points bounded by the active curriculum horizon."""
+    # num_points: number of points requested by the caller.
+    num_points = int(num_points)
+    if num_points <= 0:
+        return np.empty((0, 2), dtype=np.float32)
+
+    # time_upper: curriculum-aware upper time bound used for uniform sampling.
+    time_upper = float(domain.t_max if time_upper is None else time_upper)
+    # theta_uniform/time_uniform: fully uniform coordinates over the current visible domain.
+    theta_uniform = np.random.uniform(domain.th_min, domain.th_max, size=(num_points, 1)).astype(np.float32)
+    time_uniform = np.random.uniform(domain.t_min, time_upper, size=(num_points, 1)).astype(np.float32)
+    # collocation_points: final [theta, time] anchors.
+    collocation_points = np.hstack((theta_uniform, time_uniform)).astype(np.float32)
+    if log_prefix:
+        print(
+            f"[INFO] {log_prefix} uniform collocation: "
+            f"{num_points} points, theta_range=({domain.th_min:.4f}, {domain.th_max:.4f}), "
+            f"time_range=({domain.t_min:.4f}, {time_upper:.4f})"
+        )
     return collocation_points
 
 
@@ -903,11 +930,20 @@ def residual_scores_for_points(points_np, batch_size):
 
 class R3Resampler(dde.callbacks.Callback):
     """
-    R3 Resampler (Residual-Based Adaptive Refinement).
-    Periodically evaluates the current collocation points, discards those with low PDE error,
-    and replaces them with newly sampled points to force the network to focus on harder regions.
+    R3 Resampler with true candidate-screened RAR logic.
+    Periodically keeps the hardest active anchors, screens a large uniform candidate pool
+    by actual PDE residual, and refills the rest of the anchor set with the hardest new points.
     """
-    def __init__(self, period, retain_fraction, max_retain_fraction, retain_growth_per_refresh, score_batch_size):
+    def __init__(
+        self,
+        period,
+        retain_fraction,
+        max_retain_fraction,
+        retain_growth_per_refresh,
+        score_batch_size,
+        candidate_pool_multiplier,
+        uniform_noise_fraction,
+    ):
         super().__init__()
         # period: training-step interval between possible R3 refreshes.
         self.period = int(period)
@@ -919,15 +955,16 @@ class R3Resampler(dde.callbacks.Callback):
         self.retain_growth_per_refresh = float(retain_growth_per_refresh)
         # score_batch_size: mini-batch size used to evaluate residual scores.
         self.score_batch_size = int(score_batch_size)
+        # candidate_pool_multiplier: size of the screened candidate pool relative to the replacement budget.
+        self.candidate_pool_multiplier = int(candidate_pool_multiplier)
+        # uniform_noise_fraction: final fraction of anchors overwritten with pure uniform noise.
+        self.uniform_noise_fraction = float(uniform_noise_fraction)
         # has_updated: remembers whether the anchors were refreshed at least once.
         self.has_updated = False
         # refresh_count: number of successful R3 updates already performed.
         self.refresh_count = 0
 
     def on_epoch_end(self):
-        if curriculum_time_upper < domain.t_max - 1e-6:
-            return
-
         # step: current DeepXDE optimization step.
         step = int(self.model.train_state.step)
         if step == 0 or step % self.period != 0:
@@ -956,17 +993,43 @@ class R3Resampler(dde.callbacks.Callback):
         # retained_scores: their residual scores, used for logging.
         retained_scores = residual_scores[retain_indices]
 
-        # Generate fresh replacement points
-        # resampled_count: number of anchors replaced with new samples.
-        resampled_count = current_points.shape[0] - retain_count
-        # refreshed_points: new anchors sampled from the winning biased sampler.
-        refreshed_points = build_gaussian_biased_collocation_points(
-            resampled_count,
-            time_upper=curriculum_time_upper,
-            log_prefix=f"R3 refresh step {step}",
+        # replacement_count: number of anchors replaced after retaining the hardest current points.
+        replacement_count = current_points.shape[0] - retain_count
+        if replacement_count <= 0:
+            return
+
+        # candidate_count: large random pool screened by actual PDE error before replacement.
+        candidate_count = max(
+            replacement_count,
+            replacement_count * self.candidate_pool_multiplier,
         )
-        # updated_points: final anchor set after retain + resample.
-        updated_points = np.vstack((retained_points, refreshed_points)).astype(np.float32)
+        # candidate_points: uniformly distributed pool bounded by the current curriculum horizon.
+        candidate_points = build_uniform_collocation_points(
+            candidate_count,
+            time_upper=curriculum_time_upper,
+            log_prefix=f"R3 candidate pool step {step}",
+        )
+        # candidate_scores: true residual-based scores for the random candidate pool.
+        candidate_scores = residual_scores_for_points(candidate_points, self.score_batch_size)
+        # selected_indices: indices of the hardest candidate points that will replace discarded anchors.
+        selected_indices = np.argpartition(candidate_scores, -replacement_count)[-replacement_count:]
+        # selected_points/selected_scores: candidate points actually injected into the anchor set.
+        selected_points = candidate_points[selected_indices].astype(np.float32)
+        selected_scores = candidate_scores[selected_indices]
+
+        # updated_points: final anchor set after exploitative retain + residual-screened replacement.
+        updated_points = np.vstack((retained_points, selected_points)).astype(np.float32)
+
+        # noise_count: small fraction of uniformly random anchors injected to avoid overfitting to residual ridges.
+        noise_count = int(round(updated_points.shape[0] * self.uniform_noise_fraction))
+        if noise_count > 0:
+            noise_indices = np.random.choice(updated_points.shape[0], size=noise_count, replace=False)
+            noise_points = build_uniform_collocation_points(
+                noise_count,
+                time_upper=curriculum_time_upper,
+                log_prefix=None,
+            )
+            updated_points[noise_indices] = noise_points
         np.random.shuffle(updated_points)
 
         # Inject the refined points back into DeepXDE
@@ -979,7 +1042,12 @@ class R3Resampler(dde.callbacks.Callback):
             f"points ({100.0 * retain_count / current_points.shape[0]:.1f}%), "
             f"retain_fraction={current_retain_fraction:.2f}, "
             f"retained_mean={float(retained_scores.mean()):.3e}, "
-            f"retained_max={float(retained_scores.max()):.3e}"
+            f"retained_max={float(retained_scores.max()):.3e}, "
+            f"candidate_count={candidate_count}, "
+            f"selected_mean={float(selected_scores.mean()):.3e}, "
+            f"selected_max={float(selected_scores.max()):.3e}, "
+            f"noise_count={noise_count}, "
+            f"time_upper={curriculum_time_upper:.4f}"
         )
 
 
@@ -1011,6 +1079,8 @@ r3_callback = R3Resampler(
     max_retain_fraction=optimization_config.r3_max_retain_fraction,
     retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
+    candidate_pool_multiplier=optimization_config.r3_candidate_pool_multiplier,
+    uniform_noise_fraction=optimization_config.r3_uniform_noise_fraction,
 )
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape

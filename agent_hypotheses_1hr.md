@@ -61,6 +61,11 @@ The strongest 30-minute evidence says the best model benefits from aggressive fu
   - *Outcome:* [ ] | *Delta:* [ ]
   - *Notes:* This revisits `HYP-11.11`, which regressed mainly because `45000` anchors slowed Adam enough that the winning R3 event never happened. With a 1-hour budget, the denser base set may become useful if the model still reaches multiple full-domain refreshes.
 
+- [ ] **1HR-6.3: True RAR-Style R3 Refactor**
+  - *Idea:* Refactor `R3Resampler` so discarded anchors are replaced by the hardest points from a large uniformly sampled candidate pool instead of by blindly redrawing from the static Gaussian-plus-Beta prior.
+  - *Outcome:* [ ] | *Delta:* [ ]
+  - *Notes:* This is a direct 1-hour follow-up to `HYP-11.2`, `HYP-12.4`, and the new `1HR-0.1` baseline. The 30-minute and baseline 1-hour R3 logic still injected biased early-time points during refreshes and completely relied on the static sampler for new anchors. The 1-hour hypothesis is that true residual-screened replacement, curriculum-aware time bounds, and a small amount of uniform noise will make repeated R3 refreshes more targeted without starving later-time dynamics.
+
 ## Category 7: Optimization and Dynamic Balancing at 1 Hour
 Several optimization ideas were close or clearly stable, but they spent too much of the 30-minute budget before the model could exploit them.
 
