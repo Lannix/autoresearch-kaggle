@@ -423,6 +423,48 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     return collocation_points
 
 
+class LightweightPIKANActivation(torch.nn.Module):
+    """
+    Lightweight PIKAN-style activation.
+    Each hidden neuron starts from the stable baseline `tanh` response, then adds two tiny
+    trainable basis branches:
+    1. a Fourier branch for oscillatory structure
+    2. a localized RBF branch for sharp breather peaks
+    """
+
+    def __init__(self, width):
+        super().__init__()
+        # width: number of neuron channels this adaptive activation controls.
+        self.width = int(width)
+        # fourier_gain/freq/phase: trainable sinusoidal basis per hidden neuron.
+        self.fourier_gain = torch.nn.Parameter(torch.full((self.width,), 0.05))
+        self.fourier_freq = torch.nn.Parameter(torch.full((self.width,), 1.0))
+        self.fourier_phase = torch.nn.Parameter(torch.zeros(self.width))
+        # rbf_gain/center/log_scale: localized Gaussian bump per hidden neuron.
+        self.rbf_gain = torch.nn.Parameter(torch.full((self.width,), 0.05))
+        self.rbf_center = torch.nn.Parameter(torch.zeros(self.width))
+        self.rbf_log_scale = torch.nn.Parameter(torch.full((self.width,), -0.7))
+
+    def reset_parameters(self):
+        torch.nn.init.constant_(self.fourier_gain, 0.05)
+        torch.nn.init.constant_(self.fourier_freq, 1.0)
+        torch.nn.init.zeros_(self.fourier_phase)
+        torch.nn.init.constant_(self.rbf_gain, 0.05)
+        torch.nn.init.zeros_(self.rbf_center)
+        torch.nn.init.constant_(self.rbf_log_scale, -0.7)
+
+    def forward(self, z):
+        # base: stable baseline nonlinearity the current winner already trusts.
+        base = torch.tanh(z)
+        # fourier: small oscillatory branch that adapts to periodic micro-structure.
+        fourier = self.fourier_gain * torch.sin(self.fourier_freq * z + self.fourier_phase)
+        # rbf_scale: positive RBF width parameter for the localized peak branch.
+        rbf_scale = torch.nn.functional.softplus(self.rbf_log_scale) + 1e-4
+        # rbf: localized adaptive basis that can sharpen narrow soliton features.
+        rbf = self.rbf_gain * torch.exp(-0.5 * ((z - self.rbf_center) * rbf_scale).square())
+        return base + fourier + rbf
+
+
 class MultiScaleFourierCore(torch.nn.Module):
     """
     Standard PINNs suffer from 'spectral bias' (they struggle to learn high frequencies).
@@ -473,7 +515,7 @@ class MultiScaleFourierCore(torch.nn.Module):
         layers = []
         for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
             layers.append(torch.nn.Linear(in_dim, out_dim))
-            layers.append(torch.nn.Tanh())
+            layers.append(LightweightPIKANActivation(out_dim))
         layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
         self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
@@ -483,6 +525,8 @@ class MultiScaleFourierCore(torch.nn.Module):
             if isinstance(module, torch.nn.Linear):
                 torch.nn.init.xavier_uniform_(module.weight)
                 torch.nn.init.zeros_(module.bias)
+            if isinstance(module, LightweightPIKANActivation):
+                module.reset_parameters()
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -585,9 +629,10 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN-style core: "
+    "[INFO] Lightweight PIKAN core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}"
+    f"features_per_scale={feature_config.features_per_scale}, "
+    "adaptive_basis=(tanh + Fourier + RBF)"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
