@@ -527,8 +527,23 @@ class NormalizedChainRuleNet(dde.nn.NN):
     """
     def __init__(self):
         super().__init__()
-        # core: MsFFN-style feature encoder followed by a standard MLP head.
-        self.core = MultiScaleFourierCore(
+        # slab_split_frac: normalized location of the time-slab interface.
+        self.slab_split_frac = 0.50
+        # slab_split_time: physical time where the early and late subnetworks hand off.
+        self.slab_split_time = domain.t_min + self.slab_split_frac * domain.time_span
+        # slab_split_time_norm: same split location expressed in normalized network coordinates.
+        self.slab_split_time_norm = (self.slab_split_time - domain.time_center) * domain.time_norm_scale
+        # core_early/core_late: separate subnetworks for the early and late time slabs.
+        # Each slab is slightly narrower than the monolithic winner so the total runtime stays manageable.
+        self.core_early = MultiScaleFourierCore(
+            hidden_dim=96,
+            num_hidden_layers=4,
+            sigmas=feature_config.sigmas,
+            features_per_scale=feature_config.features_per_scale,
+        )
+        self.core_late = MultiScaleFourierCore(
+            hidden_dim=96,
+            num_hidden_layers=4,
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
@@ -552,9 +567,9 @@ class NormalizedChainRuleNet(dde.nn.NN):
         time_coord = x_norm[:, 1:2] / domain.time_norm_scale + domain.time_center
         return theta, time_coord
 
-    def forward_from_normalized(self, x_norm):
-        # raw: unconstrained network correction predicted in normalized space.
-        raw = self.core(x_norm)
+    def forward_with_core(self, x_norm, core):
+        # raw: unconstrained network correction predicted by the selected slab subnetwork.
+        raw = core(x_norm)
         # theta/time_coord: physical coordinates needed by the hard-constraint ansatz.
         theta, time_coord = self.denormalize_inputs(x_norm)
         # coeffs: cached Fourier tensors for exact IC reconstruction.
@@ -567,6 +582,38 @@ class NormalizedChainRuleNet(dde.nn.NN):
         # growth: time gate that is zero at t=t0 and gradually unlocks the NN correction.
         growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_coord - coeffs["t0"], min=0.0))
         return torch.cat((u_exact, v_exact), dim=1) + growth * raw
+
+    def forward_from_normalized(self, x_norm):
+        # early_uv: solution produced by the early-slab subnetwork on the current coordinates.
+        early_uv = self.forward_with_core(x_norm, self.core_early)
+        # time_coord: physical time used to decide which slab owns each point.
+        _, time_coord = self.denormalize_inputs(x_norm)
+        # late_mask: points assigned to the late subnetwork.
+        late_mask = time_coord[:, 0] > self.slab_split_time
+        if not torch.any(late_mask):
+            return early_uv
+
+        # x_norm_late: normalized coordinates belonging to the late slab.
+        x_norm_late = x_norm[late_mask]
+        # split_time_norm: constant normalized time coordinate at the slab interface.
+        split_time_norm = torch.full_like(x_norm_late[:, 1:2], self.slab_split_time_norm)
+        # x_split_late: same late-slab theta locations but evaluated exactly at the slab interface.
+        x_split_late = torch.cat((x_norm_late[:, 0:1], split_time_norm), dim=1)
+        # handoff_uv: early-slab solution passed forward to initialize the late slab.
+        handoff_uv = self.forward_with_core(x_split_late, self.core_early)
+        # late_raw: late-slab correction predicted after the interface.
+        late_raw = self.core_late(x_norm_late)
+        # time_late: physical late-slab times used by the second gate.
+        time_late = time_coord[late_mask]
+        # late_growth: second hard gate that is zero exactly at the slab interface.
+        late_growth = 1.0 - torch.exp(-5.0 * torch.clamp(time_late - self.slab_split_time, min=0.0))
+        # late_uv: late-slab solution that starts from the handed-off interface state.
+        late_uv = handoff_uv + late_growth * late_raw
+
+        # Stitch the slab predictions back together.
+        stitched_uv = early_uv.clone()
+        stitched_uv[late_mask] = late_uv
+        return stitched_uv
 
     def forward(self, inputs):
         # We save normalized inputs so we can calculate exact derivatives via the chain rule later
@@ -585,9 +632,10 @@ custom_collocation_points = build_gaussian_biased_collocation_points(
 )
 
 print(
-    "[INFO] MsFFN-style core: "
+    "[INFO] XPINN-style two-slab core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}"
+    f"features_per_scale={feature_config.features_per_scale}, "
+    f"slab_split_frac={0.50:.2f}, slab_hidden=96, slab_layers=4"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
