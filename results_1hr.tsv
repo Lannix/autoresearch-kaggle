@@ -1,3 +1,4 @@
 commit	val_mse	memory_gb	status	description
 56ddecd	3.093994e-02	2.08	KEEP	1HR-0.1 1-hour baseline revalidation
 f1666da	5.610189e-02	2.08	DISCARD	1HR-6.3 true RAR-style R3 refactor
+02f5f42	4.613367e-02	2.08	DISCARD	1HR-6.4 frequent true RAR without power prior
