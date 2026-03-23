@@ -370,10 +370,10 @@ Fixing gradient pathologies between PDE, IC, and BC losses.
   - *Outcome:* [DISCARD] | *Delta:* +2.559055e-02
   - *Notes:* First attempt crashed from CUDA OOM because an edge-wise Morlet head made the second-derivative graph too large. The retry fixed the crash by switching to a projected-wavelet head with per-neuron wavelet parameters and widths `(10, 10)`. Kaggle completed cleanly with only `1000.4 MB` peak VRAM and `14914` steps, but final `val_mse = 5.882751e-02`, much worse than the kept `HYP-12.4` baseline `3.323696e-02`.
 
-- [ ] **HYP-10.3: Complex-Valued Architecture with Phase Coupling**
+- [x] **HYP-10.3: Complex-Valued Architecture with Phase Coupling**
   - *Idea:* The 1D LLE is a complex equation, but separating it into real ($u$) and imaginary ($v$) channels destroys the phase coupling in standard MLPs. Build a PyTorch module using `torch.complex64` weights. Apply complex-valued activations (e.g., Complex Tanh or modReLU) and output a single complex tensor, computing the residual natively in complex arithmetic before splitting into absolute errors for the loss.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* ...
+  - *Outcome:* [DISCARD] | *Delta:* `+3.408812e+00 val_mse regression`
+  - *Notes:* Starting from the kept `HYP-12.4` baseline, replaced the real-valued residual head with a compact complex phase-coupled core: the winning real MsFFN encoder stayed in place, but its encoded features were projected into a `32`-channel complex latent space, mixed through `2` complex residual blocks with `modReLU`, and read out as a single complex residual field before the PDE residual was assembled natively in complex arithmetic. The run stayed numerically stable and memory-efficient (`1717.3 MB` peak VRAM, only `9538` trainable parameters), but the optimization dynamics were very poor. Initial PDE losses started near `7e5`, Adam never unlocked curriculum stages 2 and 3, the full domain only appeared when `set_final_stage(...)` forced it for L-BFGS, and the winning step-`5000` R3 refresh never fired. Final `val_mse` collapsed to `3.442049e+00`, far worse than both the kept baseline and the earlier `HYP-2.3` complex retry, so this lighter phase-coupled complex parameterization is also a clear discard under the current Kaggle budget.
 
 - [ ] **HYP-10.4: Transolver-Style Linear Attention (Physics-Attention)**
   - *Idea:* Standard softmax attention fails for PINNs due to $O(N^2)$ cost across batch points and stiff 2nd-order derivatives. Implement a 2026 linear-transformer block where the attention drops the softmax and computes $V \times (K^T \times Q)$ so the network can aggregate global frequency features without the autograd overhead.
