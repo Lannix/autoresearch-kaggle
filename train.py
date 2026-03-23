@@ -188,6 +188,9 @@ class OptimizationConfig:
     r3_retain_growth_per_refresh: float
     r3_score_batch_size: int
     loss_weights: tuple[float, float, float]
+    bgda_update_period: int
+    bgda_cycle_length: int
+    bgda_ascent_factor: float
 
 # Pre-calculate Fourier modes for exact IC reconstruction
 # u0_* / v0_*: Fourier coefficients of the exact initial condition.
@@ -272,6 +275,9 @@ optimization_config = OptimizationConfig(
     r3_retain_growth_per_refresh=0.10,
     r3_score_batch_size=1024,
     loss_weights=(3.0, 3.0, 0.5),
+    bgda_update_period=250,
+    bgda_cycle_length=6,
+    bgda_ascent_factor=1.75,
 )
 
 # ==========================================
@@ -606,6 +612,12 @@ print(
     f"start={optimization_config.r3_retain_fraction:.2f}, "
     f"max={optimization_config.r3_max_retain_fraction:.2f}, "
     f"growth={optimization_config.r3_retain_growth_per_refresh:.2f}"
+)
+print(
+    "[INFO] BGDA proxy: "
+    f"update_period={optimization_config.bgda_update_period}, "
+    f"cycle_length={optimization_config.bgda_cycle_length}, "
+    f"ascent_factor={optimization_config.bgda_ascent_factor:.2f}"
 )
 
 def global_power_stabilization_loss(device, dtype):
@@ -983,6 +995,71 @@ class R3Resampler(dde.callbacks.Callback):
         )
 
 
+class BGDALossBalancer(dde.callbacks.Callback):
+    """
+    Lightweight BGDA proxy: most short blocks keep the baseline loss weights, and every
+    sixth block boosts the currently hardest channel to mimic an ascent step on weights.
+    """
+
+    def __init__(self, loss_weights, update_period, cycle_length, ascent_factor):
+        super().__init__()
+        self.loss_weights = loss_weights
+        self.base_weights = np.asarray(loss_weights, dtype=np.float64)
+        self.update_period = int(update_period)
+        self.cycle_length = int(cycle_length)
+        self.ascent_factor = float(ascent_factor)
+        self.channel_names = ("pde_u", "pde_v", "power")
+
+    def on_train_begin(self):
+        self.last_update_step = -1
+        self.block_index = 0
+        self.set_weights(self.base_weights)
+
+    def set_weights(self, weights):
+        for idx, value in enumerate(weights):
+            self.loss_weights[idx] = float(value)
+
+    def current_weights(self):
+        return np.asarray(self.loss_weights, dtype=np.float64)
+
+    def on_epoch_end(self):
+        if curriculum_time_upper < domain.t_max - 1e-6:
+            return
+        step = int(self.model.train_state.step)
+        if step == 0 or step % self.update_period != 0 or step == self.last_update_step:
+            return
+        self.last_update_step = step
+
+        loss_train = self.model.train_state.loss_train
+        if loss_train is None:
+            return
+        loss_train = np.asarray(loss_train, dtype=np.float64)
+        current_weights = self.current_weights()
+        raw_losses = loss_train / np.maximum(current_weights, 1e-12)
+
+        mode_in_cycle = self.block_index % self.cycle_length
+        if mode_in_cycle < self.cycle_length - 1:
+            new_weights = self.base_weights.copy()
+            mode_name = "descent"
+            target_name = "baseline"
+        else:
+            target_idx = int(np.argmax(raw_losses))
+            new_weights = self.base_weights.copy()
+            new_weights[target_idx] *= self.ascent_factor
+            new_weights *= self.base_weights.sum() / new_weights.sum()
+            mode_name = "ascent"
+            target_name = self.channel_names[target_idx]
+
+        if not np.allclose(new_weights, current_weights, atol=1e-10, rtol=0.0):
+            print(
+                f"[INFO] BGDA proxy at step {step}: "
+                f"mode={mode_name}, target={target_name}, "
+                f"weights={tuple(round(float(v), 4) for v in new_weights)}"
+            )
+            self.set_weights(new_weights)
+        self.block_index += 1
+
+
 def model_uv(t_in, th_in, need_x=False):
     """Helper formatting output wrapper strictly used by `prepare.evaluate_mse`."""
     # DeepXDE inputs are concatenated [theta, time]
@@ -1012,6 +1089,13 @@ r3_callback = R3Resampler(
     retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
 )
+# bgda_callback: alternates baseline and adversarial loss-weight blocks during late Adam.
+bgda_callback = BGDALossBalancer(
+    loss_weights=loss_weights,
+    update_period=optimization_config.bgda_update_period,
+    cycle_length=optimization_config.bgda_cycle_length,
+    ascent_factor=optimization_config.bgda_ascent_factor,
+)
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape
 model.compile("adam", lr=1e-3, loss_weights=loss_weights)
@@ -1024,7 +1108,7 @@ try:
     # train_state: DeepXDE object storing the latest training step and state.
     losshistory, train_state = model.train(
         iterations=100000,
-        callbacks=[time_callback_adam, curriculum_callback, r3_callback],
+        callbacks=[time_callback_adam, curriculum_callback, r3_callback, bgda_callback],
         display_every=1000,
     )
     
@@ -1040,6 +1124,8 @@ try:
         optimization_config.lbfgs_total_iters,
         optimization_config.lbfgs_inner_iters,
     )
+    for idx, value in enumerate(optimization_config.loss_weights):
+        loss_weights[idx] = float(value)
     model.compile("L-BFGS", loss_weights=loss_weights)
     losshistory, train_state = model.train(
         iterations=10000,
