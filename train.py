@@ -157,6 +157,15 @@ class FeatureConfig:
 
 
 @dataclass(frozen=True)
+class SpatialTilingConfig:
+    """Controls the lightweight local periodic feature path inspired by Transolver tiling."""
+
+    num_tiles: int
+    tile_width: float
+    projection_dim: int
+
+
+@dataclass(frozen=True)
 class PowerPriorConfig:
     """Controls the late-time global-power stabilization prior."""
 
@@ -251,6 +260,13 @@ power_prior_config = PowerPriorConfig(
     theta_count=512,
     time_count=6,
     start_frac=0.80,
+)
+
+# spatial_tiling_config: controls the lightweight local periodic context path.
+spatial_tiling_config = SpatialTilingConfig(
+    num_tiles=12,
+    tile_width=0.18,
+    projection_dim=8,
 )
 
 # curriculum_config: controls when and how the visible time horizon expands.
@@ -515,6 +531,45 @@ class MultiScaleFourierCore(torch.nn.Module):
         return self.network(self.encode(x))
 
 
+class PeriodicSpatialTilingEncoder(torch.nn.Module):
+    """
+    Approximates a Transolver-style local spatial state extractor for random PINN points.
+    Instead of convolving over an ordered mesh, we evaluate periodic local windows around
+    evenly spaced theta centers, then project them into a compact learned feature vector.
+    """
+
+    def __init__(self, num_tiles, tile_width, output_dim):
+        super().__init__()
+        self.num_tiles = int(num_tiles)
+        self.tile_width = float(tile_width)
+        self.output_dim = int(output_dim)
+        centers = torch.linspace(0.0, 2.0 * math.pi, self.num_tiles + 1, dtype=torch.float32)[:-1]
+        self.register_buffer("centers", centers.view(1, -1))
+        self.projection = torch.nn.Linear(self.num_tiles, self.output_dim)
+        self.activation = torch.nn.Tanh()
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.xavier_uniform_(self.projection.weight)
+        torch.nn.init.zeros_(self.projection.bias)
+
+    def forward(self, x_norm):
+        # theta: physical periodic coordinate reconstructed from normalized inputs.
+        theta = x_norm[:, 0:1] / domain.theta_norm_scale + domain.theta_center
+        # theta_phase: map the periodic domain onto [0, 2pi) for circular local windows.
+        theta_phase = 2.0 * math.pi * (theta - domain.theta_origin) / domain.theta_period
+        # phase_delta: shortest signed periodic distance from each tile center.
+        phase_delta = torch.atan2(
+            torch.sin(theta_phase - self.centers),
+            torch.cos(theta_phase - self.centers),
+        )
+        # local_tiles: smooth periodic windows that act like pointwise spatial tiles.
+        local_tiles = torch.exp(
+            -0.5 * (phase_delta / (2.0 * math.pi * self.tile_width + 1e-12)).square()
+        )
+        return self.activation(self.projection(local_tiles))
+
+
 class NormalizedChainRuleNet(dde.nn.NN):
     """
     [DeepXDE Note for Beginners]: DeepXDE expects the network to subclass `dde.nn.NN`
@@ -527,8 +582,15 @@ class NormalizedChainRuleNet(dde.nn.NN):
     """
     def __init__(self):
         super().__init__()
+        # spatial_tiling: compact local periodic feature path inspired by Transolver tiling.
+        self.spatial_tiling = PeriodicSpatialTilingEncoder(
+            num_tiles=spatial_tiling_config.num_tiles,
+            tile_width=spatial_tiling_config.tile_width,
+            output_dim=spatial_tiling_config.projection_dim,
+        )
         # core: MsFFN-style feature encoder followed by a standard MLP head.
         self.core = MultiScaleFourierCore(
+            input_dim=2 + spatial_tiling_config.projection_dim,
             sigmas=feature_config.sigmas,
             features_per_scale=feature_config.features_per_scale,
         )
@@ -553,8 +615,10 @@ class NormalizedChainRuleNet(dde.nn.NN):
         return theta, time_coord
 
     def forward_from_normalized(self, x_norm):
+        # tiled_features: compact local theta features concatenated before the MsFFN core.
+        tiled_features = self.spatial_tiling(x_norm)
         # raw: unconstrained network correction predicted in normalized space.
-        raw = self.core(x_norm)
+        raw = self.core(torch.cat((x_norm, tiled_features), dim=1))
         # theta/time_coord: physical coordinates needed by the hard-constraint ansatz.
         theta, time_coord = self.denormalize_inputs(x_norm)
         # coeffs: cached Fourier tensors for exact IC reconstruction.
@@ -606,6 +670,12 @@ print(
     f"start={optimization_config.r3_retain_fraction:.2f}, "
     f"max={optimization_config.r3_max_retain_fraction:.2f}, "
     f"growth={optimization_config.r3_retain_growth_per_refresh:.2f}"
+)
+print(
+    "[INFO] Spatial tiling path: "
+    f"tiles={spatial_tiling_config.num_tiles}, "
+    f"tile_width={spatial_tiling_config.tile_width:.2f}, "
+    f"projection_dim={spatial_tiling_config.projection_dim}"
 )
 
 def global_power_stabilization_loss(device, dtype):
