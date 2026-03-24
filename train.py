@@ -139,7 +139,6 @@ class SamplerConfig:
     """Controls how PDE collocation points are sampled."""
 
     num_domain_points: int
-    r3_refreshable_fraction: float
     gaussian_fraction: float
     gaussian_sigma: float
     time_beta_a: float
@@ -188,9 +187,7 @@ class OptimizationConfig:
     r3_max_retain_fraction: float
     r3_retain_growth_per_refresh: float
     r3_score_batch_size: int
-    r3_candidate_pool_multiplier: int
-    r3_uniform_noise_fraction: float
-    loss_weights: tuple[float, ...]
+    loss_weights: tuple[float, float, float]
 
 # Pre-calculate Fourier modes for exact IC reconstruction
 # u0_* / v0_*: Fourier coefficients of the exact initial condition.
@@ -233,8 +230,7 @@ geomtime = dde.geometry.GeometryXTime(geom, timedomain)
 
 # sampler_config: controls the custom Gaussian/Beta collocation sampler.
 sampler_config = SamplerConfig(
-    num_domain_points=50000,
-    r3_refreshable_fraction=0.60,
+    num_domain_points=30000,
     gaussian_fraction=0.80,
     gaussian_sigma=0.15 * domain.theta_span,
     time_beta_a=1.0,
@@ -270,14 +266,12 @@ optimization_config = OptimizationConfig(
     adam_fraction=0.60,
     lbfgs_total_iters=5000,
     lbfgs_inner_iters=250,
-    r3_period=500,
+    r3_period=5000,
     r3_retain_fraction=0.10,
-    r3_max_retain_fraction=0.50,
+    r3_max_retain_fraction=0.30,
     r3_retain_growth_per_refresh=0.10,
     r3_score_batch_size=1024,
-    r3_candidate_pool_multiplier=5,
-    r3_uniform_noise_fraction=0.05,
-    loss_weights=(3.0, 3.0),
+    loss_weights=(3.0, 3.0, 0.5),
 )
 
 # ==========================================
@@ -429,107 +423,6 @@ def build_gaussian_biased_collocation_points(num_points, time_upper=None, log_pr
     return collocation_points
 
 
-def build_uniform_collocation_points(num_points, time_upper=None, log_prefix=None):
-    """Build uniformly distributed [theta, time] points bounded by the active curriculum horizon."""
-    # num_points: number of points requested by the caller.
-    num_points = int(num_points)
-    if num_points <= 0:
-        return np.empty((0, 2), dtype=np.float32)
-
-    # time_upper: curriculum-aware upper time bound used for uniform sampling.
-    time_upper = float(domain.t_max if time_upper is None else time_upper)
-    # theta_uniform/time_uniform: fully uniform coordinates over the current visible domain.
-    theta_uniform = np.random.uniform(domain.th_min, domain.th_max, size=(num_points, 1)).astype(np.float32)
-    time_uniform = np.random.uniform(domain.t_min, time_upper, size=(num_points, 1)).astype(np.float32)
-    # collocation_points: final [theta, time] anchors.
-    collocation_points = np.hstack((theta_uniform, time_uniform)).astype(np.float32)
-    if log_prefix:
-        print(
-            f"[INFO] {log_prefix} uniform collocation: "
-            f"{num_points} points, theta_range=({domain.th_min:.4f}, {domain.th_max:.4f}), "
-            f"time_range=({domain.t_min:.4f}, {time_upper:.4f})"
-        )
-    return collocation_points
-
-
-def build_partitioned_collocation_points(num_points, refreshable_fraction, time_upper=None, log_prefix="Static"):
-    """Build a mixed collocation set with a fixed static pool and a refreshable R3 pool."""
-    # num_points: total number of PDE anchors in the combined set.
-    num_points = int(num_points)
-    # refreshable_fraction: fraction of anchors assigned to the R3-refreshable pool.
-    refreshable_fraction = float(refreshable_fraction)
-    # refreshable_count/static_count: split between dynamic and fixed anchors.
-    refreshable_count = int(round(num_points * refreshable_fraction))
-    refreshable_count = min(max(refreshable_count, 1), max(1, num_points - 1))
-    static_count = num_points - refreshable_count
-
-    # static_points: anchors that remain fixed between R3 refreshes.
-    static_points = build_gaussian_biased_collocation_points(
-        static_count,
-        time_upper=time_upper,
-        log_prefix=None,
-    )
-    # refreshable_points: anchors that belong to the refreshable R3 pool.
-    refreshable_points = build_gaussian_biased_collocation_points(
-        refreshable_count,
-        time_upper=time_upper,
-        log_prefix=None,
-    )
-    # combined_points: keep static points first and refreshable points second so R3 can update only the pool slice.
-    combined_points = np.vstack((static_points, refreshable_points)).astype(np.float32)
-    if log_prefix:
-        print(
-            f"[INFO] {log_prefix} partitioned collocation: "
-            f"static={static_count}, refreshable={refreshable_count}, "
-            f"refreshable_fraction={refreshable_fraction:.2f}, "
-            f"time_upper={float(domain.t_max if time_upper is None else time_upper):.4f}"
-        )
-    return combined_points
-
-
-class PirateFeatureMLP(torch.nn.Module):
-    """
-    PirateNet-style adaptive residual head.
-
-    The encoded Fourier features first produce one shared base representation U. Each later
-    hidden layer learns a scalar blend between reusing that base representation and applying
-    a deeper nonlinear update. Initializing all blend scalars to zero starts training from a
-    shallow, stable network and lets the model gradually "unlock" depth only if it helps.
-    """
-
-    def __init__(self, input_dim, hidden_dim, num_hidden_layers, output_dim):
-        super().__init__()
-        # base_layer: projects the encoded feature bank into the shared representation U.
-        self.base_layer = torch.nn.Linear(input_dim, hidden_dim)
-        # hidden_layers: deeper transforms that can be blended in gradually through alpha.
-        self.hidden_layers = torch.nn.ModuleList(
-            [torch.nn.Linear(hidden_dim, hidden_dim) for _ in range(max(0, num_hidden_layers - 1))]
-        )
-        # alpha_params: per-layer adaptive blend scalars, initialized to zero for a flat start.
-        self.alpha_params = torch.nn.Parameter(torch.zeros(len(self.hidden_layers), dtype=torch.float32))
-        # output_layer: final linear projection back to the two physical channels.
-        self.output_layer = torch.nn.Linear(hidden_dim, output_dim)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        for layer in (self.base_layer, *self.hidden_layers, self.output_layer):
-            torch.nn.init.xavier_uniform_(layer.weight)
-            torch.nn.init.zeros_(layer.bias)
-        torch.nn.init.zeros_(self.alpha_params)
-
-    def forward(self, inputs):
-        # base: shared representation reused by every PirateNet-style blend.
-        base = torch.tanh(self.base_layer(inputs))
-        # h: current hidden state propagated through the adaptive residual stack.
-        h = base
-        for alpha, layer in zip(self.alpha_params, self.hidden_layers):
-            # candidate: deeper nonlinear update proposed by the current hidden layer.
-            candidate = torch.tanh(layer(h))
-            # h: blend between the stable base representation and the deeper candidate update.
-            h = (1.0 - alpha) * base + alpha * candidate
-        return self.output_layer(h)
-
-
 class MultiScaleFourierCore(torch.nn.Module):
     """
     Standard PINNs suffer from 'spectral bias' (they struggle to learn high frequencies).
@@ -572,17 +465,24 @@ class MultiScaleFourierCore(torch.nn.Module):
             + 2 * len(self.theta_harmonics)
             + 2 * len(self.time_harmonics)
         )
-        # network: PirateNet-style adaptive residual head operating on the encoded features.
-        self.network = PirateFeatureMLP(
-            input_dim=encoded_dim,
-            hidden_dim=hidden_dim,
-            num_hidden_layers=num_hidden_layers,
-            output_dim=output_dim,
-        )
+        
+        # Build the standard MLP on top of the Fourier features
+        # layer_dims: widths of every linear layer in the MLP head.
+        layer_dims =[encoded_dim] + [hidden_dim] * num_hidden_layers + [output_dim]
+        # layers: Python list used to build the final torch.nn.Sequential block.
+        layers = []
+        for in_dim, out_dim in zip(layer_dims[:-2], layer_dims[1:-1]):
+            layers.append(torch.nn.Linear(in_dim, out_dim))
+            layers.append(torch.nn.Tanh())
+        layers.append(torch.nn.Linear(layer_dims[-2], layer_dims[-1]))
+        self.network = torch.nn.Sequential(*layers)
         self.reset_parameters()
 
     def reset_parameters(self):
-        self.network.reset_parameters()
+        for module in self.network:
+            if isinstance(module, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                torch.nn.init.zeros_(module.bias)
 
     def encode(self, x):
         # encoded: list of feature blocks that will be concatenated into one vector.
@@ -678,18 +578,16 @@ net = NormalizedChainRuleNet()
 # curriculum_time_upper: first curriculum stage before training begins.
 curriculum_time_upper = domain.t_min + curriculum_config.upper_fracs[0] * domain.time_span
 # custom_collocation_points: first batch of PDE anchors injected into DeepXDE.
-custom_collocation_points = build_partitioned_collocation_points(
+custom_collocation_points = build_gaussian_biased_collocation_points(
     sampler_config.num_domain_points,
-    sampler_config.r3_refreshable_fraction,
     time_upper=curriculum_time_upper,
     log_prefix="Curriculum stage 1/4",
 )
 
 print(
-    "[INFO] MsFFN + PirateNet-style core: "
+    "[INFO] MsFFN-style core: "
     f"sigmas={feature_config.sigmas}, "
-    f"features_per_scale={feature_config.features_per_scale}, "
-    f"adaptive_depth_layers={len(net.core.network.hidden_layers)}"
+    f"features_per_scale={feature_config.features_per_scale}"
 )
 print(
     "[INFO] Breather-tuned Fourier features: "
@@ -698,23 +596,16 @@ print(
     f"time_harmonics={feature_config.time_harmonics}"
 )
 print(
-    "[INFO] PirateNet-style adaptive blends: "
-    f"alpha_init={net.core.network.alpha_params.detach().cpu().numpy().tolist()}"
+    "[INFO] Global power prior: "
+    f"theta_points={power_prior_config.theta_count}, "
+    f"time_points={power_prior_config.time_count}, "
+    f"late_start_frac={power_prior_config.start_frac:.2f}"
 )
 print(
     "[INFO] Progressive R3 retention: "
     f"start={optimization_config.r3_retain_fraction:.2f}, "
     f"max={optimization_config.r3_max_retain_fraction:.2f}, "
     f"growth={optimization_config.r3_retain_growth_per_refresh:.2f}"
-)
-print(
-    "[INFO] Global power prior: disabled for current experiment"
-)
-print(
-    "[INFO] R3 pool split: "
-    f"total_points={sampler_config.num_domain_points}, "
-    f"refreshable_fraction={sampler_config.r3_refreshable_fraction:.2f}, "
-    f"refreshable_points={int(round(sampler_config.num_domain_points * sampler_config.r3_refreshable_fraction))}"
 )
 
 def global_power_stabilization_loss(device, dtype):
@@ -814,7 +705,9 @@ def pde(x, y):
     """
     # weighted_res_u/weighted_res_v: pointwise PDE residual channels.
     weighted_res_u, weighted_res_v = compute_weighted_pde_residuals(x, y)
-    return[weighted_res_u, weighted_res_v]
+    # power_stabilization: extra nonlocal prior that stabilizes late-time dynamics.
+    power_stabilization = global_power_stabilization_loss(x.device, x.dtype)
+    return[weighted_res_u, weighted_res_v, power_stabilization]
 
 
 # [DeepXDE Note for Beginners]: `dde.data.TimePDE` combines the geometry, the PDE formulation, and boundary conditions.
@@ -937,9 +830,8 @@ class TimeCurriculumScheduler(dde.callbacks.Callback):
         
         # Build new points encompassing the extended time domain
         # new_anchors: fresh PDE anchors spanning the expanded time window.
-        new_anchors = build_partitioned_collocation_points(
+        new_anchors = build_gaussian_biased_collocation_points(
             sampler_config.num_domain_points,
-            sampler_config.r3_refreshable_fraction,
             time_upper=curriculum_time_upper,
             log_prefix=f"Curriculum stage {stage_index + 1}/{len(self.stage_upper_fracs)}",
         )
@@ -1011,21 +903,11 @@ def residual_scores_for_points(points_np, batch_size):
 
 class R3Resampler(dde.callbacks.Callback):
     """
-    R3 Resampler with a static anchor pool plus a refreshable true-RAR pool.
-
-    The leading slice of anchors remains fixed as structural coverage, while the trailing slice
-    is scored by PDE residual and updated from a candidate-screened random pool.
+    R3 Resampler (Residual-Based Adaptive Refinement).
+    Periodically evaluates the current collocation points, discards those with low PDE error,
+    and replaces them with newly sampled points to force the network to focus on harder regions.
     """
-    def __init__(
-        self,
-        period,
-        retain_fraction,
-        max_retain_fraction,
-        retain_growth_per_refresh,
-        score_batch_size,
-        candidate_pool_multiplier,
-        uniform_noise_fraction,
-    ):
+    def __init__(self, period, retain_fraction, max_retain_fraction, retain_growth_per_refresh, score_batch_size):
         super().__init__()
         # period: training-step interval between possible R3 refreshes.
         self.period = int(period)
@@ -1037,16 +919,15 @@ class R3Resampler(dde.callbacks.Callback):
         self.retain_growth_per_refresh = float(retain_growth_per_refresh)
         # score_batch_size: mini-batch size used to evaluate residual scores.
         self.score_batch_size = int(score_batch_size)
-        # candidate_pool_multiplier: size of the screened candidate pool relative to the replacement budget.
-        self.candidate_pool_multiplier = int(candidate_pool_multiplier)
-        # uniform_noise_fraction: fraction of the refreshable pool overwritten with pure uniform noise.
-        self.uniform_noise_fraction = float(uniform_noise_fraction)
         # has_updated: remembers whether the anchors were refreshed at least once.
         self.has_updated = False
         # refresh_count: number of successful R3 updates already performed.
         self.refresh_count = 0
 
     def on_epoch_end(self):
+        if curriculum_time_upper < domain.t_max - 1e-6:
+            return
+
         # step: current DeepXDE optimization step.
         step = int(self.model.train_state.step)
         if step == 0 or step % self.period != 0:
@@ -1056,76 +937,37 @@ class R3Resampler(dde.callbacks.Callback):
         current_points = np.asarray(self.model.data.train_x_all, dtype=np.float32)
         if current_points.shape[0] == 0:
             return
-        # static_count: number of anchors that remain fixed between R3 updates.
-        static_count = current_points.shape[0] - int(
-            round(current_points.shape[0] * sampler_config.r3_refreshable_fraction)
-        )
-        static_count = min(max(static_count, 1), max(1, current_points.shape[0] - 1))
-        # static_points: fixed anchors that are never refreshed by R3.
-        static_points = current_points[:static_count].astype(np.float32)
-        # refreshable_points: tail slice of anchors assigned to the R3 pool.
-        refreshable_points = current_points[static_count:].astype(np.float32)
-        if refreshable_points.shape[0] == 0:
-            return
 
-        # residual_scores: one scalar difficulty score per refreshable anchor.
-        residual_scores = residual_scores_for_points(refreshable_points, self.score_batch_size)
+        # Find points with highest PDE errors
+        # residual_scores: one scalar difficulty score per active anchor.
+        residual_scores = residual_scores_for_points(current_points, self.score_batch_size)
         # current_retain_fraction: progressively shifts from exploration to exploitation.
         current_retain_fraction = min(
             self.max_retain_fraction,
             self.retain_fraction + self.refresh_count * self.retain_growth_per_refresh,
         )
-        # retain_count: number of hardest refreshable anchors preserved during the refresh.
-        retain_count = max(1, int(round(refreshable_points.shape[0] * current_retain_fraction)))
+        # retain_count: number of hardest anchors preserved during the refresh.
+        retain_count = max(1, int(round(current_points.shape[0] * current_retain_fraction)))
         # retain_indices: indices of the highest-scoring anchors.
         retain_indices = np.argpartition(residual_scores, -retain_count)[-retain_count:]
-
-        # retained_points: hardest refreshable anchors kept from the current R3 pool.
-        retained_points = refreshable_points[retain_indices].astype(np.float32)
+        
+        # retained_points: hardest anchors kept from the current set.
+        retained_points = current_points[retain_indices].astype(np.float32)
         # retained_scores: their residual scores, used for logging.
         retained_scores = residual_scores[retain_indices]
 
-        # replacement_count: number of refreshable anchors replaced after retaining the hardest slice.
-        replacement_count = refreshable_points.shape[0] - retain_count
-        if replacement_count <= 0:
-            return
-
-        # candidate_count: large random pool screened by actual PDE error before replacement.
-        candidate_count = max(
-            replacement_count,
-            replacement_count * self.candidate_pool_multiplier,
-        )
-        # candidate_points: random pool bounded by the current curriculum horizon.
-        candidate_points = build_uniform_collocation_points(
-            candidate_count,
+        # Generate fresh replacement points
+        # resampled_count: number of anchors replaced with new samples.
+        resampled_count = current_points.shape[0] - retain_count
+        # refreshed_points: new anchors sampled from the winning biased sampler.
+        refreshed_points = build_gaussian_biased_collocation_points(
+            resampled_count,
             time_upper=curriculum_time_upper,
-            log_prefix=f"R3 candidate pool step {step}",
+            log_prefix=f"R3 refresh step {step}",
         )
-        # candidate_scores: true residual-based scores for the candidate pool.
-        candidate_scores = residual_scores_for_points(candidate_points, self.score_batch_size)
-        # selected_indices: indices of the hardest candidate points that will replace easy anchors.
-        selected_indices = np.argpartition(candidate_scores, -replacement_count)[-replacement_count:]
-        # selected_points/selected_scores: candidate anchors actually injected into the pool.
-        selected_points = candidate_points[selected_indices].astype(np.float32)
-        selected_scores = candidate_scores[selected_indices]
-
-        # updated_refreshable_points: exploitative retain + residual-screened replacement.
-        updated_refreshable_points = np.vstack((retained_points, selected_points)).astype(np.float32)
-
-        # noise_count: small uniform injection to avoid overfitting too tightly to residual ridges.
-        noise_count = int(round(updated_refreshable_points.shape[0] * self.uniform_noise_fraction))
-        if noise_count > 0:
-            noise_indices = np.random.choice(updated_refreshable_points.shape[0], size=noise_count, replace=False)
-            noise_points = build_uniform_collocation_points(
-                noise_count,
-                time_upper=curriculum_time_upper,
-                log_prefix=None,
-            )
-            updated_refreshable_points[noise_indices] = noise_points
-        np.random.shuffle(updated_refreshable_points)
-
-        # updated_points: final full anchor set with static anchors first and the refreshed pool second.
-        updated_points = np.vstack((static_points, updated_refreshable_points)).astype(np.float32)
+        # updated_points: final anchor set after retain + resample.
+        updated_points = np.vstack((retained_points, refreshed_points)).astype(np.float32)
+        np.random.shuffle(updated_points)
 
         # Inject the refined points back into DeepXDE
         replace_model_anchors(self.model, updated_points, sync_train_state=True)
@@ -1133,17 +975,11 @@ class R3Resampler(dde.callbacks.Callback):
         self.refresh_count += 1
 
         print(
-            f"[INFO] R3 refresh at step {step}: static={static_points.shape[0]}, "
-            f"retained {retain_count}/{refreshable_points.shape[0]} refreshable points "
-            f"({100.0 * retain_count / refreshable_points.shape[0]:.1f}%), "
+            f"[INFO] R3 refresh at step {step}: retained {retain_count}/{current_points.shape[0]} "
+            f"points ({100.0 * retain_count / current_points.shape[0]:.1f}%), "
             f"retain_fraction={current_retain_fraction:.2f}, "
             f"retained_mean={float(retained_scores.mean()):.3e}, "
-            f"retained_max={float(retained_scores.max()):.3e}, "
-            f"candidate_count={candidate_count}, "
-            f"selected_mean={float(selected_scores.mean()):.3e}, "
-            f"selected_max={float(selected_scores.max()):.3e}, "
-            f"noise_count={noise_count}, "
-            f"time_upper={curriculum_time_upper:.4f}"
+            f"retained_max={float(retained_scores.max()):.3e}"
         )
 
 
@@ -1159,8 +995,8 @@ def model_uv(t_in, th_in, need_x=False):
     uv = net(x)
     return uv[:, 0:1], uv[:, 1:2], x
 
-# Loss weights order corresponds directly to the residual channels returned by `pde`.
-# loss_weights: relative importance of the real and imaginary PDE residual channels.
+# Loss weights order corresponds directly to [res_u, res_v, power_stabilization] returned by `pde`.
+# loss_weights: relative importance of real PDE, imaginary PDE, and power prior losses.
 loss_weights = list(optimization_config.loss_weights)
 # curriculum_callback: expands the visible time horizon as training improves.
 curriculum_callback = TimeCurriculumScheduler(
@@ -1175,8 +1011,6 @@ r3_callback = R3Resampler(
     max_retain_fraction=optimization_config.r3_max_retain_fraction,
     retain_growth_per_refresh=optimization_config.r3_retain_growth_per_refresh,
     score_batch_size=optimization_config.r3_score_batch_size,
-    candidate_pool_multiplier=optimization_config.r3_candidate_pool_multiplier,
-    uniform_noise_fraction=optimization_config.r3_uniform_noise_fraction,
 )
 
 # Phase 1: Adam is great for fast navigation of the initial loss landscape
