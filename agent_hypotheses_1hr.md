@@ -92,10 +92,10 @@ Several optimization ideas were close or clearly stable, but they spent too much
 ## Category 10: Advanced Architectures Worth Retesting at 1 Hour
 Some architecture variants were stable and conceptually promising, but they lost mainly because they reduced throughput enough to miss the winning R3 moment.
 
-- [ ] **1HR-10.1: Factorized Space-Time Gating Revisit**
-  - *Idea:* Retest factorized theta/time gating on top of the current champion under the 1-hour budget.
-  - *Outcome:* [ ] | *Delta:* [ ]
-  - *Notes:* This revisits `HYP-10.7`, which was stable and relatively close but slowed Adam enough that the `5000`-step R3 refresh never fired in the 30-minute run. With more time, this is one of the clearest architecture retries.
+- [x] **1HR-10.1: PirateNet-Style Gating on `f41daf7` R3 Pool**
+  - *Idea:* Starting from the `f41daf7` pooled true-RAR setup, replace the plain MsFFN head with a PirateNet-style adaptive residual head whose blend scalars start at zero and learn how much depth to unlock.
+  - *Outcome:* [DISCARD] | *Delta:* `+1.624509e-02 val_mse regression`
+  - *Notes:* This run combined two separate lines of evidence: the architectural motivation from `HYP-10.7`/the broader gating family, and the more aggressive collocation pipeline from `1HR-6.5` (`f41daf7`), which already used `50000` anchors with a `20000` static + `30000` refreshable true-RAR pool, no global power prior, and `500`-step R3 refreshes. The PirateNet-style head itself stayed numerically stable: alpha gates started at zero, the curriculum reached the full domain by step `4000`, R3 fired every `500` steps from `500` through `5500`, and L-BFGS continued refining smoothly afterward. But generalization still collapsed relative to the kept `1HR-0.1` champion: `val_mse` regressed from `3.093994e-02` to `4.718503e-02`, peak VRAM climbed to `4161.5 MB`, and the run only reached `9537` total steps despite using the full 1-hour budget. The likely failure mode is that the more expressive PirateNet-style gate could not compensate for the already too-aggressive `f41daf7` training regime, so the combination overfit the adaptive pool rather than preserving the stronger Gaussian-plus-power-prior inductive bias of the kept baseline.
 
 - [ ] **1HR-10.2: Lightweight PIKAN Recipe Revisit**
   - *Idea:* Retest the lightweight adaptive-basis PIKAN-style head under a budget where it can actually reach the full curriculum and R3 stages.
